@@ -56,6 +56,83 @@ Promise.all([
 
   drawMergedChart(mergedData);
 });
+  //COUNTRY STUFF
+  
+Promise.all([
+  d3.json('data/africa.json'),
+  d3.csv("data/gdp-per-capita-worldbank.csv")
+]).then(data => {
+  const geoData = data[0];
+  const countryData = data[1];
+
+  console.log("Sample CSV data:", countryData[0]); // Debug
+
+  // Combine both datasets by adding GDP to the TopoJSON file
+  geoData.objects.collection.geometries.forEach(d => {
+    for (let i = 0; i < countryData.length; i++) {
+      if (d.properties.name == countryData[i].Entity) {
+        // FIX: Access countryData[i] and use "GDP per capita" column
+        d.properties.GDP = +countryData[i]["GDP per capita"];
+      }
+    }
+  });
+
+  const projection = d3.geoMercator();
+  const geoPath = d3.geoPath().projection(projection);
+  
+  // Convert compressed TopoJSON to GeoJSON format
+  const countries = topojson.feature(geoData, geoData.objects.collection);
+
+  // Scale of projection
+  projection.fitSize([width, height], countries);
+  
+  const GDPExtent = d3.extent(geoData.objects.collection.geometries, d => d.properties.GDP);
+  console.log("GDP Extent:", GDPExtent); // Debug - should not be [undefined, undefined]
+
+  // Initialize scale
+  const colorScale = d3.scaleLinear()
+    .range(['#cfe2f2', '#0d306b'])
+    .domain(GDPExtent)
+    .interpolate(d3.interpolateHcl);
+
+  // Create the SVG and chart elements
+  const svg = d3.select('#map')
+    .append('svg')
+    .attr('width', width + margin.left + margin.right)
+    .attr('height', height + margin.top + margin.bottom);
+
+  const chart = svg.append('g')
+    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+  const countryPath = chart.selectAll('.country')
+    .data(countries.features)
+    .join('path')
+    .attr('class', 'country')
+    .attr('d', geoPath)
+    .attr('fill', d => {
+      if (d.properties.GDP) {
+        return colorScale(d.properties.GDP);
+      } else {
+        return 'url(#lightstripe)';
+      }
+    });
+
+  countryPath.on('mousemove', (event, d) => {
+    const GDP = d.properties.GDP ? 
+      `<strong>$${d3.format(",")(d.properties.GDP)}</strong> GDP per capita` : 
+      'No data available';
+
+    d3.select('#tooltip')
+      .style('display', 'block')
+      .style('left', (event.pageX + 10) + 'px')
+      .style('top', (event.pageY + 10) + 'px')
+      .html(`<div class="tooltip-title">${d.properties.name}</div> <div>${GDP}</div>`);
+  }).on('mouseleave', () => {
+    d3.select('#tooltip').style('display', 'none');
+  });
+
+})
+.catch(error => console.error(error));
 
 function mergeDatasets(incomeData, gdpData) {
 
