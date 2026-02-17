@@ -26,7 +26,18 @@ Promise.all([
   drawChart2(limitDataPoints(gdpData, MAX_POINTS_PER_CHART));
 
   const mergedData = mergeDatasets(incomeData, gdpData);
-  drawMergedChart(limitDataPoints(mergedData, MAX_POINTS_PER_CHART));
+  const mergedYears = [...new Set(mergedData.map(d => d.Year))].sort((a, b) => a - b);
+
+  const renderMergedChartForYear = selectedYear => {
+    const filteredMergedData = selectedYear === "all"
+      ? mergedData
+      : mergedData.filter(d => d.Year === +selectedYear);
+
+    drawMergedChart(limitDataPoints(filteredMergedData, MAX_POINTS_PER_CHART));
+  };
+
+  setupYearDropdown(mergedYears, renderMergedChartForYear);
+  renderMergedChartForYear("all");
 
   const latestGDPByCountry = buildLatestGDPMap(gdpData);
 
@@ -131,10 +142,45 @@ function mergeDatasets(incomeData, gdpData) {
   return merged;
 }
 
+function setupYearDropdown(years, onYearChange) {
+  let controls = d3.select("#merged-chart-controls");
+
+  if (controls.empty()) {
+    controls = d3.select("body")
+      .append("div")
+      .attr("id", "merged-chart-controls");
+
+    controls
+      .append("label")
+      .attr("for", "yearDropdown")
+      .text("Merged Chart Year: ");
+
+    controls
+      .append("select")
+      .attr("id", "yearDropdown");
+  }
+
+  const dropdown = controls.select("#yearDropdown");
+
+  dropdown
+    .selectAll("option")
+    .data(["all", ...years])
+    .join("option")
+    .attr("value", d => d)
+    .text(d => d === "all" ? "All Years" : d);
+
+  dropdown.on("change", event => {
+    onYearChange(event.target.value);
+  });
+}
+
 function drawMergedChart(data) {
+
+  d3.select("#merged-chart-svg").remove();
 
   const svg = d3.select("body")
     .append("svg")
+    .attr("id", "merged-chart-svg")
     .attr("width", width + margin.left + margin.right)
     .attr("height", height + margin.top + margin.bottom)
     .append("g")
