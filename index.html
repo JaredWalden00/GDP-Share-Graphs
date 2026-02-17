@@ -1,39 +1,69 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>D3 Project Starter Template</title>
+    <title>GDP and Income Share Dashboard</title>
     <meta charset="UTF-8">
     <link rel="icon" href="data:;base64,iVBORwOKGO=" />
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>    
-    <!-- Add HTML content, SVG drawing area, ... -->
-    
-    <!-- ADDED: Map container -->
-    <div id="map"></div>
-    
-    <!-- <label for="yearSlider">Year:</label>
-    <svg height="5" width="5" xmlns="http://www.w3.org/2000/svg" version="1.1">
-        <defs>
-            <pattern id="lightstripe" patternUnits="userSpaceOnUse" width="5" height="5">
-                <image xlink:href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc1JyBoZWlnaHQ9JzUnPgogIDxyZWN0IHdpZHRoPSc1JyBoZWlnaHQ9JzUnIGZpbGw9J3doaXRlJy8+CiAgPHBhdGggZD0nTTAgNUw1IDBaTTYgNEw0IDZaTS0xIDFMMSAtMVonIHN0cm9rZT0nIzg4OCcgc3Ryb2tlLXdpZHRoPScxJy8+Cjwvc3ZnPg==" x="0" y="0" width="5" height="5"></image>
-            </pattern>
-        </defs>
-    </svg> -->
-<!-- 
-    <input type="range" id="yearSlider"> -->
-    <span id="yearLabel"></span>
+<body>
+    <header class="dashboard-header">
+        <h1>GDP per Capita and Top 1% Income Share by Country</h1>
+        <p class="dashboard-help">Use the selectors to change which quantitative economic measures are shown in each chart.</p>
+        <div class="dashboard-controls">
+            <div class="control-group">
+                <label for="measureLeftDropdown">Left chart measure</label>
+                <select id="measureLeftDropdown"></select>
+            </div>
+            <div class="control-group">
+                <label for="measureRightDropdown">Right chart measure</label>
+                <select id="measureRightDropdown"></select>
+            </div>
+            <div class="control-group">
+                <label for="mapMeasureDropdown">Map measure</label>
+                <select id="mapMeasureDropdown"></select>
+            </div>
+        </div>
+    </header>
 
-    <div id="tooltip" style="position: absolute; display: none; background: white; border: 1px solid black; padding: 5px;"></div>
+    <main id="dashboard">
+        <section class="panel" id="panel-income">
+            <div class="panel-header">
+                <h2 id="left-chart-title">Measure by Year</h2>
+            </div>
+            <div id="income-chart" class="chart-host"></div>
+        </section>
 
-    <!-- FIXED: Load libraries in correct order, BEFORE main.js -->
-    <!-- D3 bundle -->
+        <section class="panel" id="panel-gdp">
+            <div class="panel-header">
+                <h2 id="right-chart-title">Measure by Year</h2>
+            </div>
+            <div id="gdp-chart" class="chart-host"></div>
+        </section>
+
+        <section class="panel" id="panel-merged">
+            <div class="panel-header">
+                <h2 id="merged-chart-title">Measure Comparison</h2>
+                <div class="control-group">
+                    <label for="yearDropdown">Year</label>
+                    <select id="yearDropdown"></select>
+                </div>
+            </div>
+            <div id="merged-chart" class="chart-host"></div>
+        </section>
+
+        <section class="panel" id="panel-map">
+            <div class="panel-header">
+                <h2 id="map-chart-title">Latest Measure Map</h2>
+            </div>
+            <div id="map" class="chart-host"></div>
+        </section>
+    </main>
+
+    <div id="tooltip"></div>
+
     <script src="js/d3.v6.min.js"></script>
-    
-    <!-- TopoJSON - MUST be loaded before main.js -->
     <script src="https://d3js.org/topojson.v3.min.js"></script>
-    
-    <!-- Our JS code - LAST -->
     <script src="js/main.js"></script>
 </body>
 </html>
