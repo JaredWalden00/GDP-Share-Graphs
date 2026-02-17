@@ -3,99 +3,52 @@ console.log("Hello world");
 const margin = { top: 40, right: 50, bottom: 50, left: 70 };
 const width = 1000 - margin.left - margin.right;
 const height = 600 - margin.top - margin.bottom;
+const MAX_POINTS_PER_CHART = 3000;
 
-d3.csv("data/income-share-top-1-before-tax-wid.csv").then(data => {
-
-  console.log("Data loaded:", data);
-
-  // ---- DATA PROCESSING ----
-  data.forEach(d => {
-    d.Year = +d.Year;
-    d.Share = +d["Share (top 1%, before tax)"];
-  });
-
-  drawChart(data);
-
-}).catch(error => {
-  console.error("Error loading data:", error);
-});
-
-d3.csv("data/gdp-per-capita-worldbank.csv").then(data => {
-
-  console.log("Data loaded:", data);
-
-  // ---- DATA PROCESSING ----
-  data.forEach(d => {
-    d.Year = +d.Year;
-    d.GDP = +d["GDP per capita"];
-  });
-
-  drawChart2(data);
-
-}).catch(error => {
-  console.error("Error loading data:", error);
-});
-
-Promise.all([
-  d3.csv("data/income-share-top-1-before-tax-wid.csv"),
-  d3.csv("data/gdp-per-capita-worldbank.csv")
-]).then(([incomeData, gdpData]) => {
-
-  incomeData.forEach(d => {
-    d.Year = +d.Year;
-    d.Share = +d["Share (top 1%, before tax)"];
-  });
-
-  gdpData.forEach(d => {
-    d.Year = +d.Year;
-    d.GDP = +d["GDP per capita"];
-  });
-
-  const mergedData = mergeDatasets(incomeData, gdpData);
-  console.log("Merged data:", mergedData);
-
-  drawMergedChart(mergedData);
-});
-  //COUNTRY STUFF
-  
 Promise.all([
   d3.json('data/africa.json'),
+  d3.csv("data/income-share-top-1-before-tax-wid.csv"),
   d3.csv("data/gdp-per-capita-worldbank.csv")
-]).then(data => {
-  const geoData = data[0];
-  const countryData = data[1];
+]).then(([geoData, incomeDataRaw, gdpDataRaw]) => {
+  const incomeData = incomeDataRaw.map(d => ({
+    ...d,
+    Year: +d.Year,
+    Share: +d["Share (top 1%, before tax)"]
+  }));
 
-  console.log("Sample CSV data:", countryData[0]); // Debug
+  const gdpData = gdpDataRaw.map(d => ({
+    ...d,
+    Year: +d.Year,
+    GDP: +d["GDP per capita"]
+  }));
 
-  // Combine both datasets by adding GDP to the TopoJSON file
+  drawChart(limitDataPoints(incomeData, MAX_POINTS_PER_CHART));
+  drawChart2(limitDataPoints(gdpData, MAX_POINTS_PER_CHART));
+
+  const mergedData = mergeDatasets(incomeData, gdpData);
+  drawMergedChart(limitDataPoints(mergedData, MAX_POINTS_PER_CHART));
+
+  const latestGDPByCountry = buildLatestGDPMap(gdpData);
+
   geoData.objects.collection.geometries.forEach(d => {
-    for (let i = 0; i < countryData.length; i++) {
-      if (d.properties.name == countryData[i].Entity) {
-        // FIX: Access countryData[i] and use "GDP per capita" column
-        d.properties.GDP = +countryData[i]["GDP per capita"];
-      }
-    }
+    d.properties.GDP = latestGDPByCountry.get(d.properties.name);
   });
 
   const projection = d3.geoMercator();
   const geoPath = d3.geoPath().projection(projection);
   
-  // Convert compressed TopoJSON to GeoJSON format
   const countries = topojson.feature(geoData, geoData.objects.collection);
 
-  // Scale of projection
   projection.fitSize([width, height], countries);
   
   const GDPExtent = d3.extent(geoData.objects.collection.geometries, d => d.properties.GDP);
-  console.log("GDP Extent:", GDPExtent); // Debug - should not be [undefined, undefined]
+  console.log("GDP Extent:", GDPExtent);
 
-  // Initialize scale
   const colorScale = d3.scaleLinear()
     .range(['#cfe2f2', '#0d306b'])
     .domain(GDPExtent)
     .interpolate(d3.interpolateHcl);
 
-  // Create the SVG and chart elements
   const svg = d3.select('#map')
     .append('svg')
     .attr('width', width + margin.left + margin.right)
@@ -134,18 +87,40 @@ Promise.all([
 })
 .catch(error => console.error(error));
 
+function limitDataPoints(data, maxPoints) {
+  if (data.length <= maxPoints) {
+    return data;
+  }
+
+  const step = Math.ceil(data.length / maxPoints);
+  return data.filter((_, index) => index % step === 0);
+}
+
+function buildLatestGDPMap(gdpData) {
+  const latestByCountry = new Map();
+
+  gdpData.forEach(d => {
+    const existing = latestByCountry.get(d.Entity);
+    if (!existing || d.Year > existing.Year) {
+      latestByCountry.set(d.Entity, { Year: d.Year, GDP: d.GDP });
+    }
+  });
+
+  return new Map(
+    Array.from(latestByCountry.entries()).map(([country, value]) => [country, value.GDP])
+  );
+}
+
 function mergeDatasets(incomeData, gdpData) {
 
-  // Create lookup: "Entity-Year" → GDP value
   const gdpMap = new Map();
 
   gdpData.forEach(d => {
     gdpMap.set(`${d.Entity}-${d.Year}`, d.GDP);
   });
 
-  // Merge GDP into income records
   const merged = incomeData
-    .filter(d => gdpMap.has(`${d.Entity}-${d.Year}`)) // keep only matches
+    .filter(d => gdpMap.has(`${d.Entity}-${d.Year}`))
     .map(d => ({
       Entity: d.Entity,
       Year: d.Year,
@@ -165,7 +140,6 @@ function drawMergedChart(data) {
     .append("g")
     .attr("transform", `translate(${margin.left},${margin.top})`);
 
-  // ---- SCALES ----
   const xScale = d3.scaleLinear()
     .domain(d3.extent(data, d => d.GDP))
     .nice()
@@ -179,7 +153,6 @@ function drawMergedChart(data) {
   const colorScale = d3.scaleOrdinal(d3.schemeTableau10)
     .domain([...new Set(data.map(d => d.Entity))]);
 
-  // ---- AXES ----
   svg.append("g")
     .attr("transform", `translate(0,${height})`)
     .call(d3.axisBottom(xScale))
@@ -200,7 +173,6 @@ function drawMergedChart(data) {
     .attr("text-anchor", "middle")
     .text("Top 1% Income Share (%)");
 
-  // ---- POINTS ----
   const circles = svg.selectAll("circle")
     .data(data)
     .enter()
@@ -211,7 +183,6 @@ function drawMergedChart(data) {
     .attr("fill", d => colorScale(d.Entity))
     .attr("opacity", 0.7);
 
-  // ---- TOOLTIP ----
   circles
     .on("mouseover", (event, d) => {
       d3.select("#tooltip")
@@ -239,7 +210,6 @@ function drawChart(data) {
     .append("g")
     .attr("transform", `translate(${margin.left},${margin.top})`);
 
-  // ---- SCALES ----
   const xScale = d3.scaleLinear()
     .domain(d3.extent(data, d => d.Year))
     .range([0, width]);
@@ -259,7 +229,6 @@ function drawChart(data) {
   const colorScale = d3.scaleOrdinal(d3.schemeTableau10)
     .domain([...new Set(data.map(d => d.Entity))]);
 
-  // ---- AXES ----
   const xAxis = d3.axisBottom(xScale).tickFormat(d3.format("d"));
   const yAxis = d3.axisLeft(yScale);
 
@@ -283,7 +252,6 @@ function drawChart(data) {
     .attr("text-anchor", "middle")
     .text("Share of Income (Top 1%)");
 
-  // ---- CIRCLES ----
   const circles = svg.selectAll("circle")
     .data(data)
     .enter()
@@ -324,7 +292,6 @@ function drawChart2(data) {
     .append("g")
     .attr("transform", `translate(${margin.left},${margin.top})`);
 
-  // ---- SCALES ----
   const xScale = d3.scaleLinear()
     .domain(d3.extent(data, d => d.Year))
     .range([0, width]);
@@ -344,7 +311,6 @@ function drawChart2(data) {
   const colorScale = d3.scaleOrdinal(d3.schemeTableau10)
     .domain([...new Set(data.map(d => d.Entity))]);
 
-  // ---- AXES ----
   const xAxis = d3.axisBottom(xScale).tickFormat(d3.format("d"));
   const yAxis = d3.axisLeft(yScale);
 
@@ -368,7 +334,6 @@ function drawChart2(data) {
     .attr("text-anchor", "middle")
     .text("GDP per Capita (USD)");
 
-  // ---- CIRCLES ----
   const circles = svg.selectAll("circle")
     .data(data)
     .enter()
