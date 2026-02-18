@@ -1,8 +1,10 @@
-# GDP and Income Share Dashboard (Africa)
+# GDP and Income Share Dashboard
+
+![Chart preview](images/test1.png)
 
 ## Thematic focus
 
-This dashboard uses an economic inequality + macroeconomic performance theme for African countries.
+This dashboard uses an economic inequality + macroeconomic performance theme for different countries.
 
 Quantitative measures available to users:
 - Top 1% income share (%)
