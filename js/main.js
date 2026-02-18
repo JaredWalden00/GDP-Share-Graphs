@@ -1,4 +1,4 @@
-const MAX_POINTS_PER_CHART = 1200;
+const MAX_POINTS_PER_CHART = 3000;
 const CHART_MARGIN = { top: 10, right: 16, bottom: 36, left: 62 };
 const TIME_CHART_RADIUS_RANGE = [3.5, 11.5];
 const MERGED_CHART_POINT_RADIUS = 4.8;
@@ -48,7 +48,7 @@ const MEASURE_OPTIONS = [
 let appState = null;
 
 Promise.all([
-  d3.json("data/africa.json"),
+  d3.json("data/world.json"),
   d3.csv("data/income-share-top-1-before-tax-wid.csv"),
   d3.csv("data/gdp-per-capita-worldbank.csv")
 ])
@@ -64,6 +64,7 @@ Promise.all([
     const gdpData = gdpDataRaw
       .map(d => ({
         Entity: d.Entity,
+        Code: d.Code,
         Year: +d.Year,
         gdpPerCapita: +d["GDP per capita"]
       }))
@@ -80,12 +81,14 @@ Promise.all([
         leftMeasure: "top1Share",
         rightMeasure: "gdpPerCapita",
         mapMeasure: "gdpPerCapita",
+        mapYear: "latest",
         mergedYear: "all"
       }
     };
 
     setupMeasureDropdowns();
     setupYearDropdown(mergedYears);
+    setupMapYearDropdown(mergedYears);
     bindControlEvents();
     renderDashboard();
 
@@ -103,6 +106,7 @@ function buildMeasureRows(incomeData, gdpData) {
     if (!rowMap.has(key)) {
       rowMap.set(key, {
         Entity: entity,
+        Code: undefined,
         Year: year,
         top1Share: undefined,
         gdpPerCapita: undefined,
@@ -114,7 +118,11 @@ function buildMeasureRows(incomeData, gdpData) {
   };
 
   gdpData.forEach(d => {
-    getRow(d.Entity, d.Year).gdpPerCapita = d.gdpPerCapita;
+    const row = getRow(d.Entity, d.Year);
+    row.gdpPerCapita = d.gdpPerCapita;
+    if (d.Code) {
+      row.Code = d.Code;
+    }
   });
 
   incomeData.forEach(d => {
@@ -178,6 +186,18 @@ function setupYearDropdown(years) {
   dropdown.property("value", appState.selections.mergedYear);
 }
 
+function setupMapYearDropdown(years) {
+  const dropdown = d3.select("#mapYearDropdown");
+  dropdown
+    .selectAll("option")
+    .data(["latest", ...years])
+    .join("option")
+    .attr("value", d => d)
+    .text(d => (d === "latest" ? "Latest year" : d));
+
+  dropdown.property("value", appState.selections.mapYear);
+}
+
 function bindControlEvents() {
   d3.select("#measureLeftDropdown").on("change", event => {
     appState.selections.leftMeasure = event.target.value;
@@ -192,6 +212,11 @@ function bindControlEvents() {
   d3.select("#mapMeasureDropdown").on("change", event => {
     appState.selections.mapMeasure = event.target.value;
     renderDashboard();
+  });
+
+  d3.select("#mapYearDropdown").on("change", event => {
+    appState.selections.mapYear = event.target.value;
+    drawMapChart(appState.selections.mapMeasure);
   });
 
   d3.select("#yearDropdown").on("change", event => {
@@ -360,16 +385,28 @@ function drawMapChart(measureKey) {
   }
 
   const measure = MEASURES[measureKey];
-  const countries = topojson.feature(appState.geoData, appState.geoData.objects.collection);
+  const countries = getCountriesFeatureCollection(appState.geoData);
+  if (!countries || !Array.isArray(countries.features) || countries.features.length === 0) {
+    return;
+  }
+
   const projection = d3.geoMercator().fitSize([surface.innerWidth, surface.innerHeight], countries);
   const geoPath = d3.geoPath().projection(projection);
 
-  const latestValuesByCountry = buildLatestMeasureMap(appState.measureRows, measureKey);
+  const valuesByCountry = buildMeasureMapForYear(
+    appState.measureRows,
+    measureKey,
+    appState.selections.mapYear
+  );
 
   countries.features.forEach(feature => {
-    const latest = latestValuesByCountry.get(feature.properties.name);
-    feature.properties.mapValue = latest ? latest.value : undefined;
-    feature.properties.mapYear = latest ? latest.year : undefined;
+    const featureCode = typeof feature.id === "string" ? feature.id.toUpperCase() : null;
+    const valueEntry =
+      (featureCode ? valuesByCountry.byCode.get(featureCode) : undefined) ||
+      valuesByCountry.byName.get(feature.properties.name);
+
+    feature.properties.mapValue = valueEntry ? valueEntry.value : undefined;
+    feature.properties.mapYear = valueEntry ? valueEntry.year : undefined;
   });
 
   const valueList = countries.features
@@ -405,6 +442,26 @@ function drawMapChart(measureKey) {
       `);
     })
     .on("mouseleave", hideTooltip);
+}
+
+function getCountriesFeatureCollection(geoData) {
+  if (!geoData) {
+    return null;
+  }
+
+  if (geoData.type === "FeatureCollection" && Array.isArray(geoData.features)) {
+    return geoData;
+  }
+
+  if (geoData.type === "Topology" && geoData.objects && typeof topojson !== "undefined") {
+    const objectKey = Object.keys(geoData.objects)[0];
+    if (!objectKey) {
+      return null;
+    }
+    return topojson.feature(geoData, geoData.objects[objectKey]);
+  }
+
+  return null;
 }
 
 function drawAxes({ surface, xScale, yScale, xLabel, yLabel, xTickFormat, yTickFormat }) {
@@ -454,7 +511,8 @@ function createValueColorScale(measureKey, values) {
 }
 
 function buildLatestMeasureMap(rows, measureKey) {
-  const latestMap = new Map();
+  const latestByName = new Map();
+  const latestByCode = new Map();
 
   rows.forEach(row => {
     const value = row[measureKey];
@@ -462,16 +520,61 @@ function buildLatestMeasureMap(rows, measureKey) {
       return;
     }
 
-    const existing = latestMap.get(row.Entity);
-    if (!existing || row.Year > existing.year) {
-      latestMap.set(row.Entity, {
+    const existingByName = latestByName.get(row.Entity);
+    if (!existingByName || row.Year > existingByName.year) {
+      const entry = {
         year: row.Year,
         value
-      });
+      };
+
+      latestByName.set(row.Entity, entry);
+
+      if (row.Code) {
+        latestByCode.set(row.Code.toUpperCase(), entry);
+      }
     }
   });
 
-  return latestMap;
+  return {
+    byName: latestByName,
+    byCode: latestByCode
+  };
+}
+
+function buildMeasureMapForYear(rows, measureKey, yearSelection) {
+  if (yearSelection === "latest") {
+    return buildLatestMeasureMap(rows, measureKey);
+  }
+
+  const year = +yearSelection;
+  const mapForYearByName = new Map();
+  const mapForYearByCode = new Map();
+
+  rows.forEach(row => {
+    if (row.Year !== year) {
+      return;
+    }
+
+    const value = row[measureKey];
+    if (!Number.isFinite(value)) {
+      return;
+    }
+
+    const entry = {
+      year: row.Year,
+      value
+    };
+
+    mapForYearByName.set(row.Entity, entry);
+    if (row.Code) {
+      mapForYearByCode.set(row.Code.toUpperCase(), entry);
+    }
+  });
+
+  return {
+    byName: mapForYearByName,
+    byCode: mapForYearByCode
+  };
 }
 
 function createChartSurface(containerSelector, margin = CHART_MARGIN) {

@@ -1,6 +1,6 @@
 # GDP and Income Share Dashboard
 
-![Chart preview](images/test1.png)
+![Chart preview](images/test2.png)
 
 ## Thematic focus
 
