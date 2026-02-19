@@ -117,10 +117,23 @@ body {
 	font-size: 12px;
 }
 
+.year-scope-label {
+	font-weight: 700;
+}
+
+.scope-option {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.scope-option input {
+	margin: 0;
+}
+
 #measureLeftDropdown,
 #measureRightDropdown,
 #mapMeasureDropdown,
-#yearScopeDropdown,
 #globalYearDropdown,
 #countrySearchInput {
 	border: 1px solid #cdd5df;

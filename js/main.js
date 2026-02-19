@@ -97,7 +97,6 @@ Promise.all([
     };
 
     setupMeasureDropdowns();
-    setupYearScopeDropdown();
     setupGlobalYearDropdown(mergedYears);
     setupCountrySearchDatalist();
     syncControlsFromState();
@@ -187,16 +186,6 @@ function setupMeasureDropdown(selector, selectedKey) {
   dropdown.property("value", selectedKey);
 }
 
-function setupYearScopeDropdown() {
-  const dropdown = d3.select("#yearScopeDropdown");
-  dropdown
-    .selectAll("option")
-    .data(YEAR_SCOPE_OPTIONS)
-    .join("option")
-    .attr("value", d => d)
-    .text(d => (d === "all" ? "All years" : "Single year"));
-}
-
 function setupGlobalYearDropdown(years) {
   const dropdown = d3.select("#globalYearDropdown");
   dropdown
@@ -235,11 +224,23 @@ function bindControlEvents() {
     renderDashboard();
   });
 
-  d3.select("#yearScopeDropdown").on("change", event => {
-    appState.selections.yearScope = event.target.value;
-    if (appState.selections.yearScope === "single" && appState.selections.year === "latest") {
-      appState.selections.year = getDefaultLatestYear(appState.mergedYears);
+  d3.select("#yearScopeAllCheckbox").on("change", event => {
+    if (!event.target.checked) {
+      syncControlsFromState();
+      return;
     }
+    setYearScope("all");
+    syncControlsFromState();
+    syncUrlState();
+    renderDashboard();
+  });
+
+  d3.select("#yearScopeSingleCheckbox").on("change", event => {
+    if (!event.target.checked) {
+      syncControlsFromState();
+      return;
+    }
+    setYearScope("single");
     syncControlsFromState();
     syncUrlState();
     renderDashboard();
@@ -672,7 +673,8 @@ function syncControlsFromState() {
   d3.select("#measureLeftDropdown").property("value", appState.selections.leftMeasure);
   d3.select("#measureRightDropdown").property("value", appState.selections.rightMeasure);
   d3.select("#mapMeasureDropdown").property("value", appState.selections.mapMeasure);
-  d3.select("#yearScopeDropdown").property("value", appState.selections.yearScope);
+  d3.select("#yearScopeAllCheckbox").property("checked", appState.selections.yearScope === "all");
+  d3.select("#yearScopeSingleCheckbox").property("checked", appState.selections.yearScope === "single");
   d3.select("#countrySearchInput").property("value", appState.selections.countryQuery);
   d3.select("#globalYearDropdown")
     .property("value", appState.selections.year)
@@ -704,6 +706,17 @@ function syncUrlState() {
 
   const nextUrl = `${window.location.pathname}?${params.toString()}`;
   window.history.replaceState({}, "", nextUrl);
+}
+
+function setYearScope(nextScope) {
+  if (!YEAR_SCOPE_OPTIONS.includes(nextScope)) {
+    return;
+  }
+
+  appState.selections.yearScope = nextScope;
+  if (appState.selections.yearScope === "single" && appState.selections.year === "latest") {
+    appState.selections.year = getDefaultLatestYear(appState.mergedYears);
+  }
 }
 
 function getScopeFilteredRows(rows) {
