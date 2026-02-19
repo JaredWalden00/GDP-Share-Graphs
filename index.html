@@ -11,18 +11,40 @@
         <h1>GDP per Capita and Top 1% Income Share by Country</h1>
         <p class="dashboard-help">Use the selectors to change which quantitative economic measures are shown in each chart.</p>
         <div class="dashboard-controls">
-            <div class="control-group">
+            <!-- <div class="control-group">
                 <label for="measureLeftDropdown">Left chart measure</label>
                 <select id="measureLeftDropdown"></select>
             </div>
             <div class="control-group">
                 <label for="measureRightDropdown">Right chart measure</label>
                 <select id="measureRightDropdown"></select>
-            </div>
-            <div class="control-group">
+            </div> -->
+            <!-- <div class="control-group">
                 <label for="mapMeasureDropdown">Map measure</label>
                 <select id="mapMeasureDropdown"></select>
+            </div> -->
+            <div class="control-group">
+                <label for="yearScopeDropdown">Year scope</label>
+                <select id="yearScopeDropdown"></select>
             </div>
+            <div class="control-group">
+                <label for="globalYearDropdown">Year</label>
+                <select id="globalYearDropdown"></select>
+            </div>
+            <div class="control-group">
+                <label for="countrySearchInput">Country search</label>
+                <input id="countrySearchInput" type="search" list="countrySearchList" placeholder="Type country name" autocomplete="off">
+                <datalist id="countrySearchList"></datalist>
+            </div>
+            <div class="control-group">
+                <button id="resetViewButton" type="button">Reset view</button>
+            </div>
+        </div>
+        <div class="dashboard-tabs" role="tablist" aria-label="Dashboard views">
+            <button class="tab-button" data-panel="income" type="button" role="tab" aria-selected="false">Income share</button>
+            <button class="tab-button" data-panel="gdp" type="button" role="tab" aria-selected="false">GDP per capita</button>
+            <button class="tab-button" data-panel="merged" type="button" role="tab" aria-selected="false">Comparison</button>
+            <button class="tab-button" data-panel="map" type="button" role="tab" aria-selected="false">Map</button>
         </div>
     </header>
 
@@ -44,10 +66,6 @@
         <section class="panel" id="panel-merged">
             <div class="panel-header">
                 <h2 id="merged-chart-title">Measure Comparison</h2>
-                <div class="control-group">
-                    <label for="yearDropdown">Year</label>
-                    <select id="yearDropdown"></select>
-                </div>
             </div>
             <div id="merged-chart" class="chart-host"></div>
         </section>
@@ -55,10 +73,6 @@
         <section class="panel" id="panel-map">
             <div class="panel-header">
                 <h2 id="map-chart-title">Latest Measure Map</h2>
-                <div class="control-group">
-                    <label for="mapYearDropdown">Year</label>
-                    <select id="mapYearDropdown"></select>
-                </div>
             </div>
             <div id="map" class="chart-host"></div>
         </section>

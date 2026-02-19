@@ -2,6 +2,7 @@ const MAX_POINTS_PER_CHART = 3000;
 const CHART_MARGIN = { top: 10, right: 16, bottom: 36, left: 62 };
 const TIME_CHART_RADIUS_RANGE = [3.5, 11.5];
 const MERGED_CHART_POINT_RADIUS = 4.8;
+const MAP_ZOOM_SCALE_EXTENT = [1, 8];
 
 const MEASURES = {
   top1Share: {
@@ -45,6 +46,19 @@ const MEASURE_OPTIONS = [
   "top1ShareChange"
 ];
 
+const YEAR_SCOPE_OPTIONS = ["all", "single"];
+const PANEL_OPTIONS = ["income", "gdp", "merged", "map"];
+
+const DEFAULT_SELECTIONS = {
+  leftMeasure: "top1Share",
+  rightMeasure: "gdpPerCapita",
+  mapMeasure: "gdpPerCapita",
+  yearScope: "all",
+  year: "latest",
+  countryQuery: "",
+  activePanel: "income"
+};
+
 let appState = null;
 
 Promise.all([
@@ -77,19 +91,18 @@ Promise.all([
       geoData,
       measureRows,
       mergedYears,
-      selections: {
-        leftMeasure: "top1Share",
-        rightMeasure: "gdpPerCapita",
-        mapMeasure: "gdpPerCapita",
-        mapYear: "latest",
-        mergedYear: "all"
-      }
+      countryNames: [...new Set(measureRows.map(d => d.Entity))].sort(d3.ascending),
+      selections: buildInitialSelections(mergedYears),
+      mapTransform: d3.zoomIdentity
     };
 
     setupMeasureDropdowns();
-    setupYearDropdown(mergedYears);
-    setupMapYearDropdown(mergedYears);
+    setupYearScopeDropdown();
+    setupGlobalYearDropdown(mergedYears);
+    setupCountrySearchDatalist();
+    syncControlsFromState();
     bindControlEvents();
+    syncUrlState();
     renderDashboard();
 
     window.addEventListener("resize", debounce(renderDashboard, 150));
@@ -174,54 +187,100 @@ function setupMeasureDropdown(selector, selectedKey) {
   dropdown.property("value", selectedKey);
 }
 
-function setupYearDropdown(years) {
-  const dropdown = d3.select("#yearDropdown");
+function setupYearScopeDropdown() {
+  const dropdown = d3.select("#yearScopeDropdown");
   dropdown
     .selectAll("option")
-    .data(["all", ...years])
+    .data(YEAR_SCOPE_OPTIONS)
     .join("option")
     .attr("value", d => d)
-    .text(d => (d === "all" ? "All years" : d));
-
-  dropdown.property("value", appState.selections.mergedYear);
+    .text(d => (d === "all" ? "All years" : "Single year"));
 }
 
-function setupMapYearDropdown(years) {
-  const dropdown = d3.select("#mapYearDropdown");
+function setupGlobalYearDropdown(years) {
+  const dropdown = d3.select("#globalYearDropdown");
   dropdown
     .selectAll("option")
     .data(["latest", ...years])
     .join("option")
     .attr("value", d => d)
     .text(d => (d === "latest" ? "Latest year" : d));
+}
 
-  dropdown.property("value", appState.selections.mapYear);
+function setupCountrySearchDatalist() {
+  const options = d3.select("#countrySearchList")
+    .selectAll("option")
+    .data(appState.countryNames)
+    .join("option");
+
+  options.attr("value", d => d);
 }
 
 function bindControlEvents() {
   d3.select("#measureLeftDropdown").on("change", event => {
     appState.selections.leftMeasure = event.target.value;
+    syncUrlState();
     renderDashboard();
   });
 
   d3.select("#measureRightDropdown").on("change", event => {
     appState.selections.rightMeasure = event.target.value;
+    syncUrlState();
     renderDashboard();
   });
 
   d3.select("#mapMeasureDropdown").on("change", event => {
     appState.selections.mapMeasure = event.target.value;
+    syncUrlState();
     renderDashboard();
   });
 
-  d3.select("#mapYearDropdown").on("change", event => {
-    appState.selections.mapYear = event.target.value;
-    drawMapChart(appState.selections.mapMeasure);
+  d3.select("#yearScopeDropdown").on("change", event => {
+    appState.selections.yearScope = event.target.value;
+    if (appState.selections.yearScope === "single" && appState.selections.year === "latest") {
+      appState.selections.year = getDefaultLatestYear(appState.mergedYears);
+    }
+    syncControlsFromState();
+    syncUrlState();
+    renderDashboard();
   });
 
-  d3.select("#yearDropdown").on("change", event => {
-    appState.selections.mergedYear = event.target.value;
-    renderMergedChart();
+  d3.select("#globalYearDropdown").on("change", event => {
+    const selectedValue = event.target.value;
+    if (appState.selections.yearScope === "single" && selectedValue === "latest") {
+      appState.selections.year = getDefaultLatestYear(appState.mergedYears);
+      syncControlsFromState();
+    } else {
+      appState.selections.year = selectedValue;
+    }
+    syncUrlState();
+    renderDashboard();
+  });
+
+  d3.select("#resetViewButton").on("click", () => {
+    appState.selections = buildInitialSelections(appState.mergedYears, true);
+    appState.mapTransform = d3.zoomIdentity;
+    syncControlsFromState();
+    syncUrlState();
+    renderDashboard();
+  });
+
+  d3.select("#countrySearchInput").on("input", debounce(event => {
+    appState.selections.countryQuery = normalizeCountryQuery(event.target.value);
+    syncUrlState();
+    renderDashboard();
+  }, 120));
+
+  d3.selectAll(".tab-button").on("click", function () {
+    const selectedPanel = this.dataset.panel;
+    if (!PANEL_OPTIONS.includes(selectedPanel)) {
+      return;
+    }
+
+    appState.selections.activePanel = selectedPanel;
+    syncControlsFromState();
+    syncUrlState();
+    renderDashboard();
   });
 }
 
@@ -230,22 +289,61 @@ function renderDashboard() {
     return;
   }
 
+  updatePanelVisibility();
   updatePanelTitles();
-  drawMeasureTimeChart("#income-chart", appState.selections.leftMeasure);
-  drawMeasureTimeChart("#gdp-chart", appState.selections.rightMeasure);
-  renderMergedChart();
+
+  if (appState.selections.activePanel === "income") {
+    drawMeasureTimeChart("#income-chart", appState.selections.leftMeasure);
+    return;
+  }
+
+  if (appState.selections.activePanel === "gdp") {
+    drawMeasureTimeChart("#gdp-chart", appState.selections.rightMeasure);
+    return;
+  }
+
+  if (appState.selections.activePanel === "merged") {
+    renderMergedChart();
+    return;
+  }
+
   drawMapChart(appState.selections.mapMeasure);
+}
+
+function updatePanelVisibility() {
+  d3.selectAll(".panel")
+    .classed("is-active", false);
+
+  d3.select(`#panel-${appState.selections.activePanel}`)
+    .classed("is-active", true);
+
+  d3.selectAll(".tab-button")
+    .classed("is-active", false)
+    .attr("aria-selected", "false");
+
+  d3.select(`.tab-button[data-panel=\"${appState.selections.activePanel}\"]`)
+    .classed("is-active", true)
+    .attr("aria-selected", "true");
 }
 
 function updatePanelTitles() {
   const left = MEASURES[appState.selections.leftMeasure];
   const right = MEASURES[appState.selections.rightMeasure];
   const mapMeasure = MEASURES[appState.selections.mapMeasure];
+  const scopeLabel = appState.selections.yearScope === "all"
+    ? "all years"
+    : `year ${appState.selections.year}`;
+  const mapScopeLabel = appState.selections.yearScope === "all"
+    ? "latest available"
+    : `year ${appState.selections.year}`;
+  const countryScopeLabel = appState.selections.countryQuery
+    ? `, country contains \"${appState.selections.countryQuery}\"`
+    : "";
 
-  d3.select("#left-chart-title").text(`${left.label} by year`);
-  d3.select("#right-chart-title").text(`${right.label} by year`);
-  d3.select("#merged-chart-title").text(`${left.label} vs ${right.label}`);
-  d3.select("#map-chart-title").text(`Latest ${mapMeasure.label} map`);
+  d3.select("#left-chart-title").text(`${left.label} by year (${scopeLabel}${countryScopeLabel})`);
+  d3.select("#right-chart-title").text(`${right.label} by year (${scopeLabel}${countryScopeLabel})`);
+  d3.select("#merged-chart-title").text(`${left.label} vs ${right.label} (${scopeLabel}${countryScopeLabel})`);
+  d3.select("#map-chart-title").text(`${mapMeasure.label} map (${mapScopeLabel}${countryScopeLabel})`);
 }
 
 function drawMeasureTimeChart(containerSelector, measureKey) {
@@ -255,19 +353,23 @@ function drawMeasureTimeChart(containerSelector, measureKey) {
   }
 
   const measure = MEASURES[measureKey];
-  const data = appState.measureRows.filter(d => Number.isFinite(d[measureKey]));
+  const scopedRows = getScopedAndCountryFilteredRows();
+  const data = scopedRows.filter(d => Number.isFinite(d[measureKey]));
   const sampledData = limitDataPoints(data, MAX_POINTS_PER_CHART);
 
   if (sampledData.length === 0) {
     return;
   }
 
+  const yearDomain = getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
+  const valueDomain = getSafeLinearDomain(d3.extent(sampledData, d => d[measureKey]));
+
   const xScale = d3.scaleLinear()
-    .domain(d3.extent(sampledData, d => d.Year))
+    .domain(yearDomain)
     .range([0, surface.innerWidth]);
 
   const yScale = d3.scaleLinear()
-    .domain(d3.extent(sampledData, d => d[measureKey]))
+    .domain(valueDomain)
     .nice()
     .range([surface.innerHeight, 0]);
 
@@ -323,9 +425,7 @@ function renderMergedChart() {
   const leftMeasure = MEASURES[leftKey];
   const rightMeasure = MEASURES[rightKey];
 
-  const filteredByYear = appState.selections.mergedYear === "all"
-    ? appState.measureRows
-    : appState.measureRows.filter(d => d.Year === +appState.selections.mergedYear);
+  const filteredByYear = getScopedAndCountryFilteredRows();
 
   const data = filteredByYear.filter(
     d => Number.isFinite(d[leftKey]) && Number.isFinite(d[rightKey])
@@ -337,12 +437,12 @@ function renderMergedChart() {
   }
 
   const xScale = d3.scaleLinear()
-    .domain(d3.extent(sampledData, d => d[leftKey]))
+    .domain(getSafeLinearDomain(d3.extent(sampledData, d => d[leftKey])))
     .nice()
     .range([0, surface.innerWidth]);
 
   const yScale = d3.scaleLinear()
-    .domain(d3.extent(sampledData, d => d[rightKey]))
+    .domain(getSafeLinearDomain(d3.extent(sampledData, d => d[rightKey])))
     .nice()
     .range([surface.innerHeight, 0]);
 
@@ -392,11 +492,12 @@ function drawMapChart(measureKey) {
 
   const projection = d3.geoMercator().fitSize([surface.innerWidth, surface.innerHeight], countries);
   const geoPath = d3.geoPath().projection(projection);
+  const mapLayer = surface.chart.append("g").attr("class", "map-layer");
 
   const valuesByCountry = buildMeasureMapForYear(
-    appState.measureRows,
+    getCountryFilteredRows(appState.measureRows),
     measureKey,
-    appState.selections.mapYear
+    resolveMapYearSelection()
   );
 
   countries.features.forEach(feature => {
@@ -415,7 +516,7 @@ function drawMapChart(measureKey) {
 
   const colorScale = createValueColorScale(measureKey, valueList);
 
-  surface.chart.selectAll("path")
+  mapLayer.selectAll("path")
     .data(countries.features)
     .join("path")
     .attr("d", geoPath)
@@ -434,14 +535,28 @@ function drawMapChart(measureKey) {
       const yearLabel = Number.isFinite(feature.properties.mapYear)
         ? feature.properties.mapYear
         : "-";
+      const yearLabelTitle = appState.selections.yearScope === "all" ? "Latest year" : "Year";
 
       showTooltip(event, `
         <strong>${feature.properties.name}</strong><br/>
         ${measure.label}: ${valueLabel}<br/>
-        Latest year: ${yearLabel}
+        ${yearLabelTitle}: ${yearLabel}
       `);
     })
     .on("mouseleave", hideTooltip);
+
+  const zoomBehavior = d3.zoom()
+    .scaleExtent(MAP_ZOOM_SCALE_EXTENT)
+    .translateExtent([[0, 0], [surface.innerWidth, surface.innerHeight]])
+    .extent([[0, 0], [surface.innerWidth, surface.innerHeight]])
+    .on("zoom", event => {
+      mapLayer.attr("transform", event.transform);
+      appState.mapTransform = event.transform;
+    });
+
+  surface.svg
+    .call(zoomBehavior)
+    .call(zoomBehavior.transform, appState.mapTransform || d3.zoomIdentity);
 }
 
 function getCountriesFeatureCollection(geoData) {
@@ -508,6 +623,140 @@ function createValueColorScale(measureKey, values) {
   }
 
   return d3.scaleSequential(measure.interpolator).domain([minValue, maxValue]);
+}
+
+function buildInitialSelections(years, forceDefaults = false) {
+  const params = new URLSearchParams(window.location.search);
+  const latestYear = getDefaultLatestYear(years);
+
+  const leftMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("left"))
+    ? params.get("left")
+    : DEFAULT_SELECTIONS.leftMeasure;
+  const rightMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("right"))
+    ? params.get("right")
+    : DEFAULT_SELECTIONS.rightMeasure;
+  const mapMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("map"))
+    ? params.get("map")
+    : DEFAULT_SELECTIONS.mapMeasure;
+
+  const requestedScope = forceDefaults ? null : params.get("scope");
+  const yearScope = YEAR_SCOPE_OPTIONS.includes(requestedScope)
+    ? requestedScope
+    : DEFAULT_SELECTIONS.yearScope;
+
+  const requestedYear = forceDefaults ? null : params.get("year");
+  const parsedYear = +requestedYear;
+  const validYear = Number.isFinite(parsedYear) && years.includes(parsedYear)
+    ? parsedYear
+    : latestYear;
+
+  const requestedCountryQuery = forceDefaults ? "" : params.get("q");
+  const countryQuery = normalizeCountryQuery(requestedCountryQuery);
+  const requestedPanel = forceDefaults ? null : params.get("tab");
+  const activePanel = PANEL_OPTIONS.includes(requestedPanel)
+    ? requestedPanel
+    : DEFAULT_SELECTIONS.activePanel;
+
+  return {
+    leftMeasure,
+    rightMeasure,
+    mapMeasure,
+    yearScope,
+    year: yearScope === "single" ? validYear : "latest",
+    countryQuery,
+    activePanel
+  };
+}
+
+function syncControlsFromState() {
+  d3.select("#measureLeftDropdown").property("value", appState.selections.leftMeasure);
+  d3.select("#measureRightDropdown").property("value", appState.selections.rightMeasure);
+  d3.select("#mapMeasureDropdown").property("value", appState.selections.mapMeasure);
+  d3.select("#yearScopeDropdown").property("value", appState.selections.yearScope);
+  d3.select("#countrySearchInput").property("value", appState.selections.countryQuery);
+  d3.select("#globalYearDropdown")
+    .property("value", appState.selections.year)
+    .property("disabled", appState.selections.yearScope === "all");
+
+  d3.selectAll(".tab-button")
+    .classed("is-active", false)
+    .attr("aria-selected", "false");
+
+  d3.select(`.tab-button[data-panel=\"${appState.selections.activePanel}\"]`)
+    .classed("is-active", true)
+    .attr("aria-selected", "true");
+}
+
+function syncUrlState() {
+  const params = new URLSearchParams();
+  params.set("left", appState.selections.leftMeasure);
+  params.set("right", appState.selections.rightMeasure);
+  params.set("map", appState.selections.mapMeasure);
+  params.set("scope", appState.selections.yearScope);
+  params.set("tab", appState.selections.activePanel);
+  if (appState.selections.countryQuery) {
+    params.set("q", appState.selections.countryQuery);
+  }
+
+  if (appState.selections.yearScope === "single") {
+    params.set("year", appState.selections.year);
+  }
+
+  const nextUrl = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState({}, "", nextUrl);
+}
+
+function getScopeFilteredRows(rows) {
+  if (appState.selections.yearScope === "all") {
+    return rows;
+  }
+
+  return rows.filter(d => d.Year === +appState.selections.year);
+}
+
+function getCountryFilteredRows(rows) {
+  const query = appState.selections.countryQuery;
+  if (!query) {
+    return rows;
+  }
+
+  const normalizedQuery = query.toLowerCase();
+  return rows.filter(d => String(d.Entity).toLowerCase().includes(normalizedQuery));
+}
+
+function getScopedAndCountryFilteredRows() {
+  return getCountryFilteredRows(getScopeFilteredRows(appState.measureRows));
+}
+
+function normalizeCountryQuery(value) {
+  return String(value || "").trim();
+}
+
+function resolveMapYearSelection() {
+  if (appState.selections.yearScope === "all") {
+    return "latest";
+  }
+  return +appState.selections.year;
+}
+
+function getDefaultLatestYear(years) {
+  return years.length > 0 ? years[years.length - 1] : "latest";
+}
+
+function getSafeLinearDomain(extent) {
+  let [minValue, maxValue] = extent;
+
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return [0, 1];
+  }
+
+  if (minValue === maxValue) {
+    const padding = Math.abs(minValue || 1) * 0.1;
+    minValue -= padding;
+    maxValue += padding;
+  }
+
+  return [minValue, maxValue];
 }
 
 function buildLatestMeasureMap(rows, measureKey) {
@@ -600,6 +849,7 @@ function createChartSurface(containerSelector, margin = CHART_MARGIN) {
     .attr("transform", `translate(${margin.left},${margin.top})`);
 
   return {
+    svg,
     chart,
     innerWidth,
     innerHeight
