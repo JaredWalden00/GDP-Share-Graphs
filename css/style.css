@@ -189,3 +189,32 @@ body {
 .axis line {
 	stroke: #9aa4b2;
 }
+
+/* Brush styles */
+.brush .overlay {
+	pointer-events: all;
+	fill-opacity: 0;
+	stroke: none;
+}
+
+.brush .selection {
+	fill: #4f46e5;
+	fill-opacity: 0.2;
+	stroke: #4f46e5;
+	shape-rendering: crispEdges;
+}
+
+.brush .handle {
+	fill: #4f46e5;
+	stroke: #ffffff;
+	stroke-width: 1;
+	shape-rendering: crispEdges;
+}
+
+.context {
+	font-size: 9px;
+}
+
+.context-line {
+	shape-rendering: crispEdges;
+}

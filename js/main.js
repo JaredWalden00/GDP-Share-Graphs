@@ -4,6 +4,9 @@ const TIME_CHART_RADIUS_RANGE = [3.5, 11.5];
 const MERGED_CHART_POINT_RADIUS = 4.8;
 const MAP_ZOOM_SCALE_EXTENT = [1, 8];
 
+const BRUSH_HEIGHT = 20;
+const CONTEXT_HEIGHT = 60;
+
 const MEASURES = {
   top1Share: {
     label: "Top 1% income share",
@@ -93,7 +96,8 @@ Promise.all([
       mergedYears,
       countryNames: [...new Set(measureRows.map(d => d.Entity))].sort(d3.ascending),
       selections: buildInitialSelections(mergedYears),
-      mapTransform: d3.zoomIdentity
+      mapTransform: d3.zoomIdentity,
+      brushSelection: null
     };
 
     setupMeasureDropdowns();
@@ -261,6 +265,7 @@ function bindControlEvents() {
   d3.select("#resetViewButton").on("click", () => {
     appState.selections = buildInitialSelections(appState.mergedYears, true);
     appState.mapTransform = d3.zoomIdentity;
+    appState.brushSelection = null;
     syncControlsFromState();
     syncUrlState();
     renderDashboard();
@@ -348,7 +353,12 @@ function updatePanelTitles() {
 }
 
 function drawMeasureTimeChart(containerSelector, measureKey) {
-  const surface = createChartSurface(containerSelector);
+  const surface = createChartSurface(containerSelector, {
+    top: CHART_MARGIN.top,
+    right: CHART_MARGIN.right,
+    bottom: CHART_MARGIN.bottom + CONTEXT_HEIGHT + 10,
+    left: CHART_MARGIN.left
+  });
   if (!surface) {
     return;
   }
@@ -413,6 +423,9 @@ function drawMeasureTimeChart(containerSelector, measureKey) {
       ${measure.label}: ${measure.formatValue(d[measureKey])}
     `))
     .on("mouseleave", hideTooltip);
+
+  // Add brush context area
+  addBrushContext(surface, sampledData, measureKey, xScale);
 }
 
 function renderMergedChart() {
@@ -721,6 +734,11 @@ function setYearScope(nextScope) {
 
 function getScopeFilteredRows(rows) {
   if (appState.selections.yearScope === "all") {
+    // Apply brush filter if active
+    if (appState.brushSelection) {
+      const [startYear, endYear] = appState.brushSelection;
+      return rows.filter(d => d.Year >= startYear && d.Year <= endYear);
+    }
     return rows;
   }
 
@@ -888,6 +906,288 @@ function showTooltip(event, html) {
 
 function hideTooltip() {
   d3.select("#tooltip").style("display", "none");
+}
+
+function addBrushContext(surface, data, measureKey, xScale) {
+  const measure = MEASURES[measureKey];
+  
+  // Create context area below main chart
+  const contextY = surface.innerHeight + 30;
+  const context = surface.chart.append('g')
+    .attr('class', 'context')
+    .attr('transform', `translate(0, ${contextY})`);
+
+  // Create simplified line chart for context
+  const contextYScale = d3.scaleLinear()
+    .domain(d3.extent(data, d => d[measureKey]))
+    .range([CONTEXT_HEIGHT, 0]);
+
+  // Group data by entity for line chart
+  const dataByEntity = d3.groups(data, d => d.Entity);
+  const line = d3.line()
+    .x(d => xScale(d.Year))
+    .y(d => contextYScale(d[measureKey]))
+    .curve(d3.curveMonotoneX);
+
+  // Draw simplified lines for context
+  context.selectAll('.context-line')
+    .data(dataByEntity.slice(0, 20)) // Limit to avoid performance issues
+    .join('path')
+    .attr('class', 'context-line')
+    .attr('d', ([, values]) => line(values.filter(d => Number.isFinite(d[measureKey]))))
+    .attr('stroke', '#9ca3af')
+    .attr('stroke-width', 0.5)
+    .attr('fill', 'none')
+    .attr('opacity', 0.3);
+
+  // Add context axis
+  context.append('g')
+    .attr('class', 'axis')
+    .attr('transform', `translate(0, ${CONTEXT_HEIGHT})`)
+    .call(d3.axisBottom(xScale).ticks(4).tickFormat(d3.format('d')));
+
+  // Create brush group
+  const brushG = context.append('g')
+    .attr('class', 'brush x-brush');
+
+  // Initialize brush component
+  const brush = d3.brushX()
+    .extent([[0, 0], [surface.innerWidth, CONTEXT_HEIGHT]])
+    .on('brush', function(event) {
+      const selection = event.selection;
+      if (selection) {
+        const [x0, x1] = selection;
+        const yearRange = [xScale.invert(x0), xScale.invert(x1)];
+        brushed(yearRange);
+      }
+    })
+    .on('end', function(event) {
+      const selection = event.selection;
+      if (!selection) {
+        brushed(null);
+      }
+    });
+
+  // Apply brush to brush group
+  brushG.call(brush);
+
+  // Set initial brush selection if exists
+  if (appState.brushSelection) {
+    const [startYear, endYear] = appState.brushSelection;
+    const x0 = xScale(startYear);
+    const x1 = xScale(endYear);
+    brushG.call(brush.move, [x0, x1]);
+  }
+}
+
+function brushed(yearRange) {
+  appState.brushSelection = yearRange;
+  
+  // Only update if in "all years" mode
+  if (appState.selections.yearScope === "all") {
+    // Use debounced update to prevent excessive redraws
+    debouncedBrushUpdate();
+  }
+}
+
+// Create debounced version of brush update
+const debouncedBrushUpdate = debounce(() => {
+  if (appState.selections.activePanel === "income" || appState.selections.activePanel === "gdp") {
+    updateTimeChartData();
+  } else if (appState.selections.activePanel === "merged") {
+    updateMergedChartData();
+  }
+}, 50);
+
+function updateTimeChartData() {
+  const containerSelector = appState.selections.activePanel === "income" ? "#income-chart" : "#gdp-chart";
+  const measureKey = appState.selections.activePanel === "income" 
+    ? appState.selections.leftMeasure 
+    : appState.selections.rightMeasure;
+  
+  const surface = d3.select(containerSelector).select("svg").select("g");
+  if (surface.empty()) return;
+  
+  const measure = MEASURES[measureKey];
+  const scopedRows = getScopedAndCountryFilteredRows();
+  const data = scopedRows.filter(d => Number.isFinite(d[measureKey]));
+  const sampledData = limitDataPoints(data, MAX_POINTS_PER_CHART);
+  
+  if (sampledData.length === 0) return;
+  
+  const yearDomain = getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
+  const valueDomain = getSafeLinearDomain(d3.extent(sampledData, d => d[measureKey]));
+  
+  // Get the chart dimensions from the container
+  const container = document.querySelector(containerSelector);
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  const margin = {
+    top: CHART_MARGIN.top,
+    right: CHART_MARGIN.right,
+    bottom: CHART_MARGIN.bottom + CONTEXT_HEIGHT + 10,
+    left: CHART_MARGIN.left
+  };
+  const innerWidth = Math.max(10, width - margin.left - margin.right);
+  const innerHeight = Math.max(10, height - margin.top - margin.bottom);
+  
+  const xScale = d3.scaleLinear()
+    .domain(yearDomain)
+    .range([0, innerWidth]);
+    
+  const yScale = d3.scaleLinear()
+    .domain(valueDomain)
+    .nice()
+    .range([innerHeight, 0]);
+  
+  const values = sampledData.map(d => d[measureKey]);
+  const colorScale = createValueColorScale(measureKey, values);
+  const radiusScale = d3.scaleSqrt()
+    .domain(d3.extent(values))
+    .range(TIME_CHART_RADIUS_RANGE);
+    
+  if (measure.colorType === "diverging") {
+    radiusScale.domain(d3.extent(values.map(Math.abs)));
+  }
+  
+  // Update x-axis to reflect brushed time range
+  surface.select(".axis")
+    .filter(function() { return d3.select(this).attr("transform").includes(`translate(0,${innerHeight})`); })
+    .transition().duration(200)
+    .call(d3.axisBottom(xScale).ticks(6).tickFormat(d3.format("d")));
+  
+  // Update y-axis if data domain changed
+  surface.select(".axis")
+    .filter(function() { return !d3.select(this).attr("transform").includes("translate"); })
+    .transition().duration(200)
+    .call(d3.axisLeft(yScale).ticks(6).tickFormat(measure.formatTick));
+  
+  // Update circles without redrawing axes or brush context
+  surface.selectAll("circle")
+    .data(sampledData, d => `${d.Entity}-${d.Year}`)
+    .join(
+      enter => enter.append("circle")
+        .attr("cx", d => xScale(d.Year))
+        .attr("cy", d => yScale(d[measureKey]))
+        .attr("r", 0)
+        .attr("fill", d => colorScale(d[measureKey]))
+        .attr("opacity", 0)
+        .attr("stroke", "#4b5563")
+        .attr("stroke-width", 0.4)
+        .call(enter => enter.transition().duration(200)
+          .attr("r", d => {
+            const value = measure.colorType === "diverging" ? Math.abs(d[measureKey]) : d[measureKey];
+            return radiusScale(value);
+          })
+          .attr("opacity", 0.78)
+        ),
+      update => update
+        .call(update => update.transition().duration(200)
+          .attr("cx", d => xScale(d.Year))
+          .attr("cy", d => yScale(d[measureKey]))
+          .attr("r", d => {
+            const value = measure.colorType === "diverging" ? Math.abs(d[measureKey]) : d[measureKey];
+            return radiusScale(value);
+          })
+          .attr("fill", d => colorScale(d[measureKey]))
+        ),
+      exit => exit.call(exit => exit.transition().duration(200)
+        .attr("r", 0)
+        .attr("opacity", 0)
+        .remove()
+      )
+    )
+    .on("mousemove", (event, d) => showTooltip(event, `
+      <strong>${d.Entity}</strong><br/>
+      Year: ${d.Year}<br/>
+      ${measure.label}: ${measure.formatValue(d[measureKey])}
+    `))
+    .on("mouseleave", hideTooltip);
+}
+
+function updateMergedChartData() {
+  const surface = d3.select("#merged-chart").select("svg").select("g");
+  if (surface.empty()) return;
+  
+  const leftKey = appState.selections.leftMeasure;
+  const rightKey = appState.selections.rightMeasure;
+  const leftMeasure = MEASURES[leftKey];
+  const rightMeasure = MEASURES[rightKey];
+  
+  const filteredByYear = getScopedAndCountryFilteredRows();
+  const data = filteredByYear.filter(
+    d => Number.isFinite(d[leftKey]) && Number.isFinite(d[rightKey])
+  );
+  const sampledData = limitDataPoints(data, MAX_POINTS_PER_CHART);
+  
+  if (sampledData.length === 0) return;
+  
+  // Get the chart dimensions from the container
+  const container = document.querySelector("#merged-chart");
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  const innerWidth = Math.max(10, width - CHART_MARGIN.left - CHART_MARGIN.right);
+  const innerHeight = Math.max(10, height - CHART_MARGIN.top - CHART_MARGIN.bottom);
+  
+  const xScale = d3.scaleLinear()
+    .domain(getSafeLinearDomain(d3.extent(sampledData, d => d[leftKey])))
+    .nice()
+    .range([0, innerWidth]);
+    
+  const yScale = d3.scaleLinear()
+    .domain(getSafeLinearDomain(d3.extent(sampledData, d => d[rightKey])))
+    .nice()
+    .range([innerHeight, 0]);
+  
+  const valuesForColor = sampledData.map(d => d[rightKey]);
+  const colorScale = createValueColorScale(rightKey, valuesForColor);
+  
+  // Update both axes to reflect new data ranges
+  surface.select(".axis")
+    .filter(function() { return d3.select(this).attr("transform").includes(`translate(0,${innerHeight})`); })
+    .transition().duration(200)
+    .call(d3.axisBottom(xScale).ticks(6).tickFormat(leftMeasure.formatTick));
+  
+  surface.select(".axis")
+    .filter(function() { return !d3.select(this).attr("transform").includes("translate"); })
+    .transition().duration(200)
+    .call(d3.axisLeft(yScale).ticks(6).tickFormat(rightMeasure.formatTick));
+  
+  // Update circles without redrawing axes
+  surface.selectAll("circle")
+    .data(sampledData, d => `${d.Entity}-${d.Year}`)
+    .join(
+      enter => enter.append("circle")
+        .attr("cx", d => xScale(d[leftKey]))
+        .attr("cy", d => yScale(d[rightKey]))
+        .attr("r", 0)
+        .attr("fill", d => colorScale(d[rightKey]))
+        .attr("opacity", 0)
+        .attr("stroke", "#374151")
+        .attr("stroke-width", 0.35)
+        .call(enter => enter.transition().duration(200)
+          .attr("r", MERGED_CHART_POINT_RADIUS)
+          .attr("opacity", 0.75)
+        ),
+      update => update
+        .call(update => update.transition().duration(200)
+          .attr("cx", d => xScale(d[leftKey]))
+          .attr("cy", d => yScale(d[rightKey]))
+          .attr("fill", d => colorScale(d[rightKey]))
+        ),
+      exit => exit.call(exit => exit.transition().duration(200)
+        .attr("r", 0)
+        .attr("opacity", 0)
+        .remove()
+      )
+    )
+    .on("mousemove", (event, d) => showTooltip(event, `
+      <strong>${d.Entity}</strong><br/>
+      Year: ${d.Year}<br/>
+      ${leftMeasure.label}: ${leftMeasure.formatValue(d[leftKey])}<br/>
+      ${rightMeasure.label}: ${rightMeasure.formatValue(d[rightKey])}
+    `))
+    .on("mouseleave", hideTooltip);
 }
 
 function debounce(fn, wait) {
