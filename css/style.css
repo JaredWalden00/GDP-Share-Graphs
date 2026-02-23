@@ -134,7 +134,10 @@ body {
 #measureLeftDropdown,
 #measureRightDropdown,
 #mapMeasureDropdown,
+#mapYearDropdown,
 #globalYearDropdown,
+#brushStartDropdown,
+#brushEndDropdown,
 #countrySearchInput {
 	border: 1px solid #cdd5df;
 	border-radius: 4px;
@@ -162,6 +165,12 @@ body {
 }
 
 #globalYearDropdown:disabled {
+	background: #f3f4f6;
+	color: #6b7280;
+}
+
+#brushStartDropdown:disabled,
+#brushEndDropdown:disabled {
 	background: #f3f4f6;
 	color: #6b7280;
 }

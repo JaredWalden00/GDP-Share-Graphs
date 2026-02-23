@@ -23,7 +23,7 @@
                 <label for="mapMeasureDropdown">Map measure</label>
                 <select id="mapMeasureDropdown"></select>
             </div> -->
-            <div class="control-group">
+            <!-- <div class="control-group">
                 <span class="year-scope-label">Year scope</span>
                 <label class="scope-option" for="yearScopeAllCheckbox">
                     <input id="yearScopeAllCheckbox" type="checkbox">
@@ -37,6 +37,12 @@
             <div class="control-group">
                 <label for="globalYearDropdown">Year</label>
                 <select id="globalYearDropdown"></select>
+            </div> -->
+            <div class="control-group">
+                <label for="brushStartDropdown">Years</label>
+                <select id="brushStartDropdown"></select>
+                <span>to</span>
+                <select id="brushEndDropdown"></select>
             </div>
             <div class="control-group">
                 <label for="countrySearchInput">Country search</label>
@@ -80,6 +86,14 @@
         <section class="panel" id="panel-map">
             <div class="panel-header">
                 <h2 id="map-chart-title">Latest Measure Map</h2>
+                <div class="control-group">
+                    <label for="mapMeasureDropdown">Measure</label>
+                    <select id="mapMeasureDropdown"></select>
+                </div>
+                <div class="control-group">
+                    <label for="mapYearDropdown">Year</label>
+                    <select id="mapYearDropdown"></select>
+                </div>
             </div>
             <div id="map" class="chart-host"></div>
         </section>

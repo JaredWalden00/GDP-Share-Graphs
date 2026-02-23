@@ -49,6 +49,11 @@ const MEASURE_OPTIONS = [
   "top1ShareChange"
 ];
 
+const MAP_MEASURE_OPTIONS = [
+  "top1Share",
+  "gdpPerCapita"
+];
+
 const YEAR_SCOPE_OPTIONS = ["all", "single"];
 const PANEL_OPTIONS = ["income", "gdp", "merged", "map"];
 
@@ -56,6 +61,7 @@ const DEFAULT_SELECTIONS = {
   leftMeasure: "top1Share",
   rightMeasure: "gdpPerCapita",
   mapMeasure: "gdpPerCapita",
+  mapYear: "latest",
   yearScope: "all",
   year: "latest",
   countryQuery: "",
@@ -97,11 +103,17 @@ Promise.all([
       countryNames: [...new Set(measureRows.map(d => d.Entity))].sort(d3.ascending),
       selections: buildInitialSelections(mergedYears),
       mapTransform: d3.zoomIdentity,
-      brushSelection: null
+      brushSelections: {
+        income: null,
+        gdp: null,
+        merged: null
+      }
     };
 
     setupMeasureDropdowns();
     setupGlobalYearDropdown(mergedYears);
+    setupMapYearDropdown(mergedYears);
+    setupBrushYearDropdowns(mergedYears);
     setupCountrySearchDatalist();
     syncControlsFromState();
     bindControlEvents();
@@ -116,6 +128,7 @@ Promise.all([
 
 function buildMeasureRows(incomeData, gdpData) {
   const rowMap = new Map();
+  const codeByEntity = new Map();
 
   const getRow = (entity, year) => {
     const key = `${entity}-${year}`;
@@ -137,12 +150,23 @@ function buildMeasureRows(incomeData, gdpData) {
     const row = getRow(d.Entity, d.Year);
     row.gdpPerCapita = d.gdpPerCapita;
     if (d.Code) {
-      row.Code = d.Code;
+      const normalizedCode = String(d.Code).toUpperCase();
+      row.Code = normalizedCode;
+      codeByEntity.set(d.Entity, normalizedCode);
     }
   });
 
   incomeData.forEach(d => {
     getRow(d.Entity, d.Year).top1Share = d.top1Share;
+  });
+
+  rowMap.forEach(row => {
+    if (!row.Code) {
+      const sharedCode = codeByEntity.get(row.Entity);
+      if (sharedCode) {
+        row.Code = sharedCode;
+      }
+    }
   });
 
   const gdpByEntity = d3.groups(gdpData, d => d.Entity);
@@ -175,14 +199,14 @@ function buildMeasureRows(incomeData, gdpData) {
 function setupMeasureDropdowns() {
   setupMeasureDropdown("#measureLeftDropdown", appState.selections.leftMeasure);
   setupMeasureDropdown("#measureRightDropdown", appState.selections.rightMeasure);
-  setupMeasureDropdown("#mapMeasureDropdown", appState.selections.mapMeasure);
+  setupMeasureDropdown("#mapMeasureDropdown", appState.selections.mapMeasure, MAP_MEASURE_OPTIONS);
 }
 
-function setupMeasureDropdown(selector, selectedKey) {
+function setupMeasureDropdown(selector, selectedKey, options = MEASURE_OPTIONS) {
   const dropdown = d3.select(selector);
   dropdown
     .selectAll("option")
-    .data(MEASURE_OPTIONS)
+    .data(options)
     .join("option")
     .attr("value", d => d)
     .text(d => MEASURES[d].label);
@@ -198,6 +222,35 @@ function setupGlobalYearDropdown(years) {
     .join("option")
     .attr("value", d => d)
     .text(d => (d === "latest" ? "Latest year" : d));
+}
+
+function setupMapYearDropdown(years) {
+  const dropdown = d3.select("#mapYearDropdown");
+  dropdown
+    .selectAll("option")
+    .data(["latest", ...years])
+    .join("option")
+    .attr("value", d => d)
+    .text(d => (d === "latest" ? "Latest year" : d));
+}
+
+function setupBrushYearDropdowns(years) {
+  const startDropdown = d3.select("#brushStartDropdown");
+  const endDropdown = d3.select("#brushEndDropdown");
+
+  startDropdown
+    .selectAll("option")
+    .data(years)
+    .join("option")
+    .attr("value", d => d)
+    .text(d => d);
+
+  endDropdown
+    .selectAll("option")
+    .data(years)
+    .join("option")
+    .attr("value", d => d)
+    .text(d => d);
 }
 
 function setupCountrySearchDatalist() {
@@ -224,6 +277,13 @@ function bindControlEvents() {
 
   d3.select("#mapMeasureDropdown").on("change", event => {
     appState.selections.mapMeasure = event.target.value;
+    syncUrlState();
+    renderDashboard();
+  });
+
+  d3.select("#mapYearDropdown").on("change", event => {
+    const selectedValue = event.target.value;
+    appState.selections.mapYear = selectedValue === "latest" ? "latest" : +selectedValue;
     syncUrlState();
     renderDashboard();
   });
@@ -262,10 +322,84 @@ function bindControlEvents() {
     renderDashboard();
   });
 
+  d3.select("#brushStartDropdown").on("change", event => {
+    if (appState.selections.yearScope !== "all") {
+      syncControlsFromState();
+      return;
+    }
+
+    const activePanel = getActiveTimePanel();
+    if (!activePanel) {
+      syncControlsFromState();
+      return;
+    }
+
+    const minYear = appState.mergedYears[0];
+    const maxYear = appState.mergedYears[appState.mergedYears.length - 1];
+    let startYear = +event.target.value;
+    const currentSelection = appState.brushSelections[activePanel] || [minYear, maxYear];
+    let endYear = currentSelection[1];
+
+    if (!Number.isFinite(startYear)) {
+      syncControlsFromState();
+      return;
+    }
+
+    startYear = Math.max(minYear, Math.min(maxYear, startYear));
+    endYear = Math.max(minYear, Math.min(maxYear, endYear));
+
+    if (startYear > endYear) {
+      endYear = startYear;
+    }
+
+    appState.brushSelections[activePanel] = [startYear, endYear];
+    syncControlsFromState();
+    updatePanelTitles();
+    renderDashboard();
+  });
+
+  d3.select("#brushEndDropdown").on("change", event => {
+    if (appState.selections.yearScope !== "all") {
+      syncControlsFromState();
+      return;
+    }
+
+    const activePanel = getActiveTimePanel();
+    if (!activePanel) {
+      syncControlsFromState();
+      return;
+    }
+
+    const minYear = appState.mergedYears[0];
+    const maxYear = appState.mergedYears[appState.mergedYears.length - 1];
+    let endYear = +event.target.value;
+    const currentSelection = appState.brushSelections[activePanel] || [minYear, maxYear];
+    let startYear = currentSelection[0];
+
+    if (!Number.isFinite(endYear)) {
+      syncControlsFromState();
+      return;
+    }
+
+    startYear = Math.max(minYear, Math.min(maxYear, startYear));
+    endYear = Math.max(minYear, Math.min(maxYear, endYear));
+
+    if (endYear < startYear) {
+      startYear = endYear;
+    }
+
+    appState.brushSelections[activePanel] = [startYear, endYear];
+    syncControlsFromState();
+    updatePanelTitles();
+    renderDashboard();
+  });
+
   d3.select("#resetViewButton").on("click", () => {
     appState.selections = buildInitialSelections(appState.mergedYears, true);
     appState.mapTransform = d3.zoomIdentity;
-    appState.brushSelection = null;
+    appState.brushSelections.income = null;
+    appState.brushSelections.gdp = null;
+    appState.brushSelections.merged = null;
     syncControlsFromState();
     syncUrlState();
     renderDashboard();
@@ -336,20 +470,42 @@ function updatePanelTitles() {
   const left = MEASURES[appState.selections.leftMeasure];
   const right = MEASURES[appState.selections.rightMeasure];
   const mapMeasure = MEASURES[appState.selections.mapMeasure];
-  const scopeLabel = appState.selections.yearScope === "all"
-    ? "all years"
-    : `year ${appState.selections.year}`;
-  const mapScopeLabel = appState.selections.yearScope === "all"
+  const leftScopeLabel = getPanelScopeLabel("income");
+  const rightScopeLabel = getPanelScopeLabel("gdp");
+  const mergedScopeLabel = getPanelScopeLabel("merged");
+  const mapScopeLabel = appState.selections.mapYear === "latest"
     ? "latest available"
-    : `year ${appState.selections.year}`;
+    : `year ${appState.selections.mapYear}`;
   const countryScopeLabel = appState.selections.countryQuery
     ? `, country contains \"${appState.selections.countryQuery}\"`
     : "";
 
-  d3.select("#left-chart-title").text(`${left.label} by year (${scopeLabel}${countryScopeLabel})`);
-  d3.select("#right-chart-title").text(`${right.label} by year (${scopeLabel}${countryScopeLabel})`);
-  d3.select("#merged-chart-title").text(`${left.label} vs ${right.label} (${scopeLabel}${countryScopeLabel})`);
+  d3.select("#left-chart-title").text(`${left.label} by year (${leftScopeLabel}${countryScopeLabel})`);
+  d3.select("#right-chart-title").text(`${right.label} by year (${rightScopeLabel}${countryScopeLabel})`);
+  d3.select("#merged-chart-title").text(`${left.label} vs ${right.label} (${mergedScopeLabel}${countryScopeLabel})`);
   d3.select("#map-chart-title").text(`${mapMeasure.label} map (${mapScopeLabel}${countryScopeLabel})`);
+}
+
+function getPanelScopeLabel(panelKey) {
+  if (appState.selections.yearScope === "single") {
+    return `year ${appState.selections.year}`;
+  }
+
+  if (panelKey !== "income" && panelKey !== "gdp" && panelKey !== "merged") {
+    return "all years";
+  }
+
+  const selection = appState.brushSelections[panelKey];
+  if (!selection || selection.length !== 2) {
+    return "all years";
+  }
+
+  const [startYear, endYear] = selection;
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+    return "all years";
+  }
+
+  return `years ${startYear}-${endYear}`;
 }
 
 function drawMeasureTimeChart(containerSelector, measureKey) {
@@ -364,19 +520,38 @@ function drawMeasureTimeChart(containerSelector, measureKey) {
   }
 
   const measure = MEASURES[measureKey];
-  const scopedRows = getScopedAndCountryFilteredRows();
-  const data = scopedRows.filter(d => Number.isFinite(d[measureKey]));
-  const sampledData = limitDataPoints(data, MAX_POINTS_PER_CHART);
+  const countryFilteredRows = getCountryFilteredRows(appState.measureRows);
+  const allModeData = countryFilteredRows.filter(d => Number.isFinite(d[measureKey]));
+  const scopedRows = getScopeFilteredRows(countryFilteredRows);
+  const visibleData = scopedRows.filter(d => Number.isFinite(d[measureKey]));
+  const sampledData = limitDataPoints(visibleData, MAX_POINTS_PER_CHART);
 
   if (sampledData.length === 0) {
     return;
   }
 
-  const yearDomain = getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
+  const activeBrushSelection = getActiveBrushSelection();
+  const hasActiveBrushSelection = appState.selections.yearScope === "all"
+    && Array.isArray(activeBrushSelection)
+    && activeBrushSelection.length === 2
+    && Number.isFinite(activeBrushSelection[0])
+    && Number.isFinite(activeBrushSelection[1]);
+
+  const fullYearDomain = getSafeLinearDomain(d3.extent(allModeData, d => d.Year));
+
+  const yearDomain = appState.selections.yearScope === "all"
+    ? (hasActiveBrushSelection
+      ? getSafeLinearDomain(activeBrushSelection)
+      : fullYearDomain)
+    : getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
   const valueDomain = getSafeLinearDomain(d3.extent(sampledData, d => d[measureKey]));
 
   const xScale = d3.scaleLinear()
     .domain(yearDomain)
+    .range([0, surface.innerWidth]);
+
+  const contextXScale = d3.scaleLinear()
+    .domain(fullYearDomain)
     .range([0, surface.innerWidth]);
 
   const yScale = d3.scaleLinear()
@@ -425,7 +600,10 @@ function drawMeasureTimeChart(containerSelector, measureKey) {
     .on("mouseleave", hideTooltip);
 
   // Add brush context area
-  addBrushContext(surface, sampledData, measureKey, xScale);
+  const contextData = appState.selections.yearScope === "all"
+    ? limitDataPoints(allModeData, MAX_POINTS_PER_CHART)
+    : sampledData;
+  addBrushContext(surface, contextData, measureKey, contextXScale);
 }
 
 function renderMergedChart() {
@@ -549,7 +727,7 @@ function drawMapChart(measureKey) {
       const yearLabel = Number.isFinite(feature.properties.mapYear)
         ? feature.properties.mapYear
         : "-";
-      const yearLabelTitle = appState.selections.yearScope === "all" ? "Latest year" : "Year";
+      const yearLabelTitle = appState.selections.mapYear === "latest" ? "Latest year" : "Year";
 
       showTooltip(event, `
         <strong>${feature.properties.name}</strong><br/>
@@ -649,9 +827,16 @@ function buildInitialSelections(years, forceDefaults = false) {
   const rightMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("right"))
     ? params.get("right")
     : DEFAULT_SELECTIONS.rightMeasure;
-  const mapMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("map"))
+  const mapMeasure = !forceDefaults && MAP_MEASURE_OPTIONS.includes(params.get("map"))
     ? params.get("map")
     : DEFAULT_SELECTIONS.mapMeasure;
+  const requestedMapYear = forceDefaults ? null : params.get("mapYear");
+  const parsedMapYear = +requestedMapYear;
+  const mapYear = requestedMapYear === "latest"
+    ? "latest"
+    : (Number.isFinite(parsedMapYear) && years.includes(parsedMapYear)
+      ? parsedMapYear
+      : DEFAULT_SELECTIONS.mapYear);
 
   const requestedScope = forceDefaults ? null : params.get("scope");
   const yearScope = YEAR_SCOPE_OPTIONS.includes(requestedScope)
@@ -675,6 +860,7 @@ function buildInitialSelections(years, forceDefaults = false) {
     leftMeasure,
     rightMeasure,
     mapMeasure,
+    mapYear,
     yearScope,
     year: yearScope === "single" ? validYear : "latest",
     countryQuery,
@@ -686,12 +872,32 @@ function syncControlsFromState() {
   d3.select("#measureLeftDropdown").property("value", appState.selections.leftMeasure);
   d3.select("#measureRightDropdown").property("value", appState.selections.rightMeasure);
   d3.select("#mapMeasureDropdown").property("value", appState.selections.mapMeasure);
+  d3.select("#mapYearDropdown").property("value", appState.selections.mapYear);
   d3.select("#yearScopeAllCheckbox").property("checked", appState.selections.yearScope === "all");
   d3.select("#yearScopeSingleCheckbox").property("checked", appState.selections.yearScope === "single");
   d3.select("#countrySearchInput").property("value", appState.selections.countryQuery);
   d3.select("#globalYearDropdown")
     .property("value", appState.selections.year)
     .property("disabled", appState.selections.yearScope === "all");
+
+  const minYear = appState.mergedYears[0];
+  const maxYear = appState.mergedYears[appState.mergedYears.length - 1];
+  const activeTimePanel = getActiveTimePanel();
+  const activeBrushSelection = activeTimePanel
+    ? appState.brushSelections[activeTimePanel]
+    : null;
+
+  const brushStartYear = activeBrushSelection ? activeBrushSelection[0] : minYear;
+  const brushEndYear = activeBrushSelection ? activeBrushSelection[1] : maxYear;
+  const brushDropdownDisabled = appState.selections.yearScope !== "all" || !activeTimePanel;
+
+  d3.select("#brushStartDropdown")
+    .property("value", brushStartYear)
+    .property("disabled", brushDropdownDisabled);
+
+  d3.select("#brushEndDropdown")
+    .property("value", brushEndYear)
+    .property("disabled", brushDropdownDisabled);
 
   d3.selectAll(".tab-button")
     .classed("is-active", false)
@@ -707,6 +913,7 @@ function syncUrlState() {
   params.set("left", appState.selections.leftMeasure);
   params.set("right", appState.selections.rightMeasure);
   params.set("map", appState.selections.mapMeasure);
+  params.set("mapYear", appState.selections.mapYear);
   params.set("scope", appState.selections.yearScope);
   params.set("tab", appState.selections.activePanel);
   if (appState.selections.countryQuery) {
@@ -734,9 +941,9 @@ function setYearScope(nextScope) {
 
 function getScopeFilteredRows(rows) {
   if (appState.selections.yearScope === "all") {
-    // Apply brush filter if active
-    if (appState.brushSelection) {
-      const [startYear, endYear] = appState.brushSelection;
+    // Apply brush filter only for time-chart panels.
+    if (shouldApplyBrushFilter()) {
+      const [startYear, endYear] = getActiveBrushSelection();
       return rows.filter(d => d.Year >= startYear && d.Year <= endYear);
     }
     return rows;
@@ -759,19 +966,105 @@ function getScopedAndCountryFilteredRows() {
   return getCountryFilteredRows(getScopeFilteredRows(appState.measureRows));
 }
 
+function shouldApplyBrushFilter() {
+  if (!appState || appState.selections.yearScope !== "all") {
+    return false;
+  }
+
+  const activeTimePanel = getActiveTimePanel();
+  if (!activeTimePanel) {
+    return false;
+  }
+
+  const activeBrushSelection = getActiveBrushSelection();
+
+  if (!activeBrushSelection || activeBrushSelection.length !== 2) {
+    return false;
+  }
+
+  const [startYear, endYear] = activeBrushSelection;
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+    return false;
+  }
+
+  return true;
+}
+
+function getActiveTimePanel() {
+  if (!appState) {
+    return null;
+  }
+
+  const panel = appState.selections.activePanel;
+  return panel === "income" || panel === "gdp" || panel === "merged" ? panel : null;
+}
+
+function getActiveBrushSelection() {
+  const activeTimePanel = getActiveTimePanel();
+  if (!activeTimePanel) {
+    return null;
+  }
+
+  return appState.brushSelections[activeTimePanel];
+}
+
+function setActiveBrushSelection(value) {
+  const activeTimePanel = getActiveTimePanel();
+  if (!activeTimePanel) {
+    return;
+  }
+
+  appState.brushSelections[activeTimePanel] = value;
+}
+
 function normalizeCountryQuery(value) {
   return String(value || "").trim();
 }
 
 function resolveMapYearSelection() {
-  if (appState.selections.yearScope === "all") {
-    return "latest";
-  }
-  return +appState.selections.year;
+  return appState.selections.mapYear;
 }
 
 function getDefaultLatestYear(years) {
   return years.length > 0 ? years[years.length - 1] : "latest";
+}
+
+function snapYearDownToAvailable(year) {
+  const years = appState?.mergedYears || [];
+  if (years.length === 0 || !Number.isFinite(year)) {
+    return year;
+  }
+
+  const firstYear = years[0];
+  const lastYear = years[years.length - 1];
+  if (year <= firstYear) {
+    return firstYear;
+  }
+  if (year >= lastYear) {
+    return lastYear;
+  }
+
+  const index = d3.bisectRight(years, year) - 1;
+  return years[Math.max(0, index)];
+}
+
+function snapYearUpToAvailable(year) {
+  const years = appState?.mergedYears || [];
+  if (years.length === 0 || !Number.isFinite(year)) {
+    return year;
+  }
+
+  const firstYear = years[0];
+  const lastYear = years[years.length - 1];
+  if (year <= firstYear) {
+    return firstYear;
+  }
+  if (year >= lastYear) {
+    return lastYear;
+  }
+
+  const index = d3.bisectLeft(years, year);
+  return years[Math.min(years.length - 1, index)];
 }
 
 function getSafeLinearDomain(extent) {
@@ -972,8 +1265,9 @@ function addBrushContext(surface, data, measureKey, xScale) {
   brushG.call(brush);
 
   // Set initial brush selection if exists
-  if (appState.brushSelection) {
-    const [startYear, endYear] = appState.brushSelection;
+  const activeBrushSelection = getActiveBrushSelection();
+  if (activeBrushSelection) {
+    const [startYear, endYear] = activeBrushSelection;
     const x0 = xScale(startYear);
     const x1 = xScale(endYear);
     brushG.call(brush.move, [x0, x1]);
@@ -981,10 +1275,29 @@ function addBrushContext(surface, data, measureKey, xScale) {
 }
 
 function brushed(yearRange) {
-  appState.brushSelection = yearRange;
+  if (!yearRange) {
+    setActiveBrushSelection(null);
+  } else {
+    const rawStart = Math.min(yearRange[0], yearRange[1]);
+    const rawEnd = Math.max(yearRange[0], yearRange[1]);
+    let startYear = snapYearDownToAvailable(rawStart);
+    let endYear = snapYearUpToAvailable(rawEnd);
+
+    if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) {
+      return;
+    }
+
+    if (startYear > endYear) {
+      startYear = endYear;
+    }
+
+    setActiveBrushSelection([startYear, endYear]);
+  }
   
   // Only update if in "all years" mode
   if (appState.selections.yearScope === "all") {
+    syncControlsFromState();
+    updatePanelTitles();
     // Use debounced update to prevent excessive redraws
     debouncedBrushUpdate();
   }
@@ -994,8 +1307,6 @@ function brushed(yearRange) {
 const debouncedBrushUpdate = debounce(() => {
   if (appState.selections.activePanel === "income" || appState.selections.activePanel === "gdp") {
     updateTimeChartData();
-  } else if (appState.selections.activePanel === "merged") {
-    updateMergedChartData();
   }
 }, 50);
 
@@ -1009,13 +1320,26 @@ function updateTimeChartData() {
   if (surface.empty()) return;
   
   const measure = MEASURES[measureKey];
-  const scopedRows = getScopedAndCountryFilteredRows();
-  const data = scopedRows.filter(d => Number.isFinite(d[measureKey]));
-  const sampledData = limitDataPoints(data, MAX_POINTS_PER_CHART);
+  const countryFilteredRows = getCountryFilteredRows(appState.measureRows);
+  const allModeData = countryFilteredRows.filter(d => Number.isFinite(d[measureKey]));
+  const scopedRows = getScopeFilteredRows(countryFilteredRows);
+  const visibleData = scopedRows.filter(d => Number.isFinite(d[measureKey]));
+  const sampledData = limitDataPoints(visibleData, MAX_POINTS_PER_CHART);
   
   if (sampledData.length === 0) return;
+
+  const activeBrushSelection = getActiveBrushSelection();
+  const hasActiveBrushSelection = appState.selections.yearScope === "all"
+    && Array.isArray(activeBrushSelection)
+    && activeBrushSelection.length === 2
+    && Number.isFinite(activeBrushSelection[0])
+    && Number.isFinite(activeBrushSelection[1]);
   
-  const yearDomain = getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
+  const yearDomain = appState.selections.yearScope === "all"
+    ? (hasActiveBrushSelection
+      ? getSafeLinearDomain(activeBrushSelection)
+      : getSafeLinearDomain(d3.extent(allModeData, d => d.Year)))
+    : getSafeLinearDomain(d3.extent(sampledData, d => d.Year));
   const valueDomain = getSafeLinearDomain(d3.extent(sampledData, d => d[measureKey]));
   
   // Get the chart dimensions from the container
