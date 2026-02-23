@@ -24,6 +24,14 @@ const MEASURES = {
     colorType: "sequential",
     interpolator: d3.interpolateBlues
   },
+  medianIncome: {
+    label: "Median income (after tax)",
+    axisLabel: "Median income (USD)",
+    formatTick: d3.format("~s"),
+    formatValue: value => `$${d3.format(",.0f")(value)}`,
+    colorType: "sequential",
+    interpolator: d3.interpolateYlGn
+  },
   gdpGrowth: {
     label: "GDP growth (YoY)",
     axisLabel: "GDP growth (% year-over-year)",
@@ -45,8 +53,15 @@ const MEASURES = {
 const MEASURE_OPTIONS = [
   "top1Share",
   "gdpPerCapita",
+  "medianIncome",
   "gdpGrowth",
   "top1ShareChange"
+];
+
+const COMPARISON_MEASURE_OPTIONS = [
+  "top1Share",
+  "gdpPerCapita",
+  "medianIncome"
 ];
 
 const MAP_MEASURE_OPTIONS = [
@@ -55,7 +70,7 @@ const MAP_MEASURE_OPTIONS = [
 ];
 
 const YEAR_SCOPE_OPTIONS = ["all", "single"];
-const PANEL_OPTIONS = ["income", "gdp", "merged", "map"];
+const PANEL_OPTIONS = ["income", "gdp", "median", "merged", "map"];
 
 const DEFAULT_SELECTIONS = {
   leftMeasure: "top1Share",
@@ -73,9 +88,10 @@ let appState = null;
 Promise.all([
   d3.json("data/world.json"),
   d3.csv("data/income-share-top-1-before-tax-wid.csv"),
-  d3.csv("data/gdp-per-capita-worldbank.csv")
+  d3.csv("data/gdp-per-capita-worldbank.csv"),
+  d3.csv("data/median-income-after-tax-lis.csv")
 ])
-  .then(([geoData, incomeDataRaw, gdpDataRaw]) => {
+  .then(([geoData, incomeDataRaw, gdpDataRaw, medianIncomeDataRaw]) => {
     const incomeData = incomeDataRaw
       .map(d => ({
         Entity: d.Entity,
@@ -93,7 +109,16 @@ Promise.all([
       }))
       .filter(d => Number.isFinite(d.Year) && Number.isFinite(d.gdpPerCapita));
 
-    const measureRows = buildMeasureRows(incomeData, gdpData);
+    const medianIncomeData = medianIncomeDataRaw
+      .map(d => ({
+        Entity: d.Entity,
+        Code: d.Code,
+        Year: +d.Year,
+        medianIncome: +d.Median
+      }))
+      .filter(d => Number.isFinite(d.Year) && Number.isFinite(d.medianIncome));
+
+    const measureRows = buildMeasureRows(incomeData, gdpData, medianIncomeData);
     const mergedYears = [...new Set(measureRows.map(d => d.Year))].sort((a, b) => a - b);
 
     appState = {
@@ -106,6 +131,7 @@ Promise.all([
       brushSelections: {
         income: null,
         gdp: null,
+        median: null,
         merged: null
       }
     };
@@ -126,7 +152,7 @@ Promise.all([
     console.error(error);
   });
 
-function buildMeasureRows(incomeData, gdpData) {
+function buildMeasureRows(incomeData, gdpData, medianIncomeData) {
   const rowMap = new Map();
   const codeByEntity = new Map();
 
@@ -139,6 +165,7 @@ function buildMeasureRows(incomeData, gdpData) {
         Year: year,
         top1Share: undefined,
         gdpPerCapita: undefined,
+        medianIncome: undefined,
         gdpGrowth: undefined,
         top1ShareChange: undefined
       });
@@ -158,6 +185,20 @@ function buildMeasureRows(incomeData, gdpData) {
 
   incomeData.forEach(d => {
     getRow(d.Entity, d.Year).top1Share = d.top1Share;
+  });
+
+  medianIncomeData.forEach(d => {
+    const row = getRow(d.Entity, d.Year);
+    row.medianIncome = d.medianIncome;
+    if (d.Code) {
+      const normalizedCode = String(d.Code).toUpperCase();
+      if (!row.Code) {
+        row.Code = normalizedCode;
+      }
+      if (!codeByEntity.has(d.Entity)) {
+        codeByEntity.set(d.Entity, normalizedCode);
+      }
+    }
   });
 
   rowMap.forEach(row => {
@@ -197,8 +238,8 @@ function buildMeasureRows(incomeData, gdpData) {
 }
 
 function setupMeasureDropdowns() {
-  setupMeasureDropdown("#measureLeftDropdown", appState.selections.leftMeasure);
-  setupMeasureDropdown("#measureRightDropdown", appState.selections.rightMeasure);
+  setupMeasureDropdown("#measureLeftDropdown", appState.selections.leftMeasure, COMPARISON_MEASURE_OPTIONS);
+  setupMeasureDropdown("#measureRightDropdown", appState.selections.rightMeasure, COMPARISON_MEASURE_OPTIONS);
   setupMeasureDropdown("#mapMeasureDropdown", appState.selections.mapMeasure, MAP_MEASURE_OPTIONS);
 }
 
@@ -262,15 +303,36 @@ function setupCountrySearchDatalist() {
   options.attr("value", d => d);
 }
 
+function getAlternateComparisonMeasure(disallowedMeasure) {
+  const alternate = COMPARISON_MEASURE_OPTIONS.find(measure => measure !== disallowedMeasure);
+  return alternate || disallowedMeasure;
+}
+
+function enforceDistinctComparisonMeasures() {
+  if (appState.selections.leftMeasure !== appState.selections.rightMeasure) {
+    return;
+  }
+
+  appState.selections.rightMeasure = getAlternateComparisonMeasure(appState.selections.leftMeasure);
+}
+
 function bindControlEvents() {
   d3.select("#measureLeftDropdown").on("change", event => {
     appState.selections.leftMeasure = event.target.value;
+    if (appState.selections.leftMeasure === appState.selections.rightMeasure) {
+      appState.selections.rightMeasure = getAlternateComparisonMeasure(appState.selections.leftMeasure);
+    }
+    syncControlsFromState();
     syncUrlState();
     renderDashboard();
   });
 
   d3.select("#measureRightDropdown").on("change", event => {
     appState.selections.rightMeasure = event.target.value;
+    if (appState.selections.rightMeasure === appState.selections.leftMeasure) {
+      appState.selections.leftMeasure = getAlternateComparisonMeasure(appState.selections.rightMeasure);
+    }
+    syncControlsFromState();
     syncUrlState();
     renderDashboard();
   });
@@ -399,6 +461,7 @@ function bindControlEvents() {
     appState.mapTransform = d3.zoomIdentity;
     appState.brushSelections.income = null;
     appState.brushSelections.gdp = null;
+    appState.brushSelections.median = null;
     appState.brushSelections.merged = null;
     syncControlsFromState();
     syncUrlState();
@@ -442,6 +505,11 @@ function renderDashboard() {
     return;
   }
 
+  if (appState.selections.activePanel === "median") {
+    drawMeasureTimeChart("#median-chart", "medianIncome");
+    return;
+  }
+
   if (appState.selections.activePanel === "merged") {
     renderMergedChart();
     return;
@@ -469,9 +537,11 @@ function updatePanelVisibility() {
 function updatePanelTitles() {
   const left = MEASURES[appState.selections.leftMeasure];
   const right = MEASURES[appState.selections.rightMeasure];
+  const median = MEASURES.medianIncome;
   const mapMeasure = MEASURES[appState.selections.mapMeasure];
   const leftScopeLabel = getPanelScopeLabel("income");
   const rightScopeLabel = getPanelScopeLabel("gdp");
+  const medianScopeLabel = getPanelScopeLabel("median");
   const mergedScopeLabel = getPanelScopeLabel("merged");
   const mapScopeLabel = appState.selections.mapYear === "latest"
     ? "latest available"
@@ -482,6 +552,7 @@ function updatePanelTitles() {
 
   d3.select("#left-chart-title").text(`${left.label} by year (${leftScopeLabel}${countryScopeLabel})`);
   d3.select("#right-chart-title").text(`${right.label} by year (${rightScopeLabel}${countryScopeLabel})`);
+  d3.select("#median-chart-title").text(`${median.label} by year (${medianScopeLabel}${countryScopeLabel})`);
   d3.select("#merged-chart-title").text(`${left.label} vs ${right.label} (${mergedScopeLabel}${countryScopeLabel})`);
   d3.select("#map-chart-title").text(`${mapMeasure.label} map (${mapScopeLabel}${countryScopeLabel})`);
 }
@@ -491,7 +562,7 @@ function getPanelScopeLabel(panelKey) {
     return `year ${appState.selections.year}`;
   }
 
-  if (panelKey !== "income" && panelKey !== "gdp" && panelKey !== "merged") {
+  if (panelKey !== "income" && panelKey !== "gdp" && panelKey !== "median" && panelKey !== "merged") {
     return "all years";
   }
 
@@ -821,12 +892,15 @@ function buildInitialSelections(years, forceDefaults = false) {
   const params = new URLSearchParams(window.location.search);
   const latestYear = getDefaultLatestYear(years);
 
-  const leftMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("left"))
+  const leftMeasure = !forceDefaults && COMPARISON_MEASURE_OPTIONS.includes(params.get("left"))
     ? params.get("left")
     : DEFAULT_SELECTIONS.leftMeasure;
-  const rightMeasure = !forceDefaults && MEASURE_OPTIONS.includes(params.get("right"))
+  let rightMeasure = !forceDefaults && COMPARISON_MEASURE_OPTIONS.includes(params.get("right"))
     ? params.get("right")
     : DEFAULT_SELECTIONS.rightMeasure;
+  if (leftMeasure === rightMeasure) {
+    rightMeasure = getAlternateComparisonMeasure(leftMeasure);
+  }
   const mapMeasure = !forceDefaults && MAP_MEASURE_OPTIONS.includes(params.get("map"))
     ? params.get("map")
     : DEFAULT_SELECTIONS.mapMeasure;
@@ -996,7 +1070,7 @@ function getActiveTimePanel() {
   }
 
   const panel = appState.selections.activePanel;
-  return panel === "income" || panel === "gdp" || panel === "merged" ? panel : null;
+  return panel === "income" || panel === "gdp" || panel === "median" || panel === "merged" ? panel : null;
 }
 
 function getActiveBrushSelection() {
@@ -1305,16 +1379,37 @@ function brushed(yearRange) {
 
 // Create debounced version of brush update
 const debouncedBrushUpdate = debounce(() => {
-  if (appState.selections.activePanel === "income" || appState.selections.activePanel === "gdp") {
+  if (
+    appState.selections.activePanel === "income"
+    || appState.selections.activePanel === "gdp"
+    || appState.selections.activePanel === "median"
+  ) {
     updateTimeChartData();
   }
 }, 50);
 
 function updateTimeChartData() {
-  const containerSelector = appState.selections.activePanel === "income" ? "#income-chart" : "#gdp-chart";
-  const measureKey = appState.selections.activePanel === "income" 
-    ? appState.selections.leftMeasure 
-    : appState.selections.rightMeasure;
+  const timePanelConfigByPanel = {
+    income: {
+      containerSelector: "#income-chart",
+      measureKey: appState.selections.leftMeasure
+    },
+    gdp: {
+      containerSelector: "#gdp-chart",
+      measureKey: appState.selections.rightMeasure
+    },
+    median: {
+      containerSelector: "#median-chart",
+      measureKey: "medianIncome"
+    }
+  };
+
+  const activePanelConfig = timePanelConfigByPanel[appState.selections.activePanel];
+  if (!activePanelConfig) {
+    return;
+  }
+
+  const { containerSelector, measureKey } = activePanelConfig;
   
   const surface = d3.select(containerSelector).select("svg").select("g");
   if (surface.empty()) return;
