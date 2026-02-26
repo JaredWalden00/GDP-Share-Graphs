@@ -1,66 +1,62 @@
-# GDP and Income Share Dashboard
+# GDP, Inequality, and Income Dashboard
 
-Hosted at: https://jaredwalden00.github.io/GDP-Share-Graphs/
+Interactive D3 dashboard for exploring cross-country patterns in income concentration and macroeconomic outcomes over time.
 
-![Chart preview](images/test2.png)
+- Live demo: https://jaredwalden00.github.io/GDP-Share-Graphs/
+- Tech: Vanilla JavaScript + D3 v6 + TopoJSON
 
-## Thematic focus
+![Dashboard preview](images/test3.png)
 
-This dashboard uses an economic inequality + macroeconomic performance theme for different countries.
+## What this project shows
 
-Quantitative measures available to users:
+The dashboard combines three datasets into a unified country-year table and visualizes:
+
 - Top 1% income share (%)
 - GDP per capita (USD)
-- GDP growth (year-over-year %)
-- Top 1% share change (year-over-year percentage points)
+- Median income after tax (USD)
+- GDP growth (YoY %)
+- Top 1% share change (YoY percentage points)
 
-## Layout sketch (before coding)
+## Views
 
-I used a one-page dashboard layout so all related views stay visible at the same time and users can compare attributes without scrolling.
+Use the tabs in the header to switch between five panels:
 
-```
-┌───────────────────────────────┬───────────────────────────────┐
-│ Income Share by Year          │ GDP per Capita by Year        │
-│ (bubble chart, x=year)        │ (bubble chart, x=year)        │
-├───────────────────────────────┼───────────────────────────────┤
-│ GDP vs Top 1% Share           │ Latest GDP per Capita Map     │
-│ (scatter, selectable year)    │ (choropleth)                  │
-└───────────────────────────────┴───────────────────────────────┘
-```
+- **Income share**: Time-series bubble chart
+- **GDP per capita**: Time-series bubble chart
+- **Median income**: Time-series bubble chart
+- **Comparison**: Scatter plot of selected X vs Y measures
+- **Map**: Choropleth for a selected map measure and year
 
-Intentional layout choices:
-- The two time-series bubble charts are adjacent so the two attributes can be compared quickly year-to-year.
-- The merged scatterplot sits directly below to support cross-attribute comparison in one view.
-- The map remains visible as a geographic context panel without pushing analytical charts off screen.
-- The full dashboard is constrained to viewport height (`100vh`) with no page scrolling.
+## Controls and interactions
 
-## User interaction guidance
+Global controls in the header:
 
-Controls are placed in the top header for clear, global access:
-- **Left chart measure**: chooses the measure shown in the top-left chart.
-- **Right chart measure**: chooses the measure shown in the top-right chart.
-- **Map measure**: chooses the measure encoded on the choropleth map.
-- **Year** (in merged chart panel): filters the bottom-left comparison chart to a specific year or all years.
+- **Years (start → end)**: Filters the active time-based panel with a brushed year range
+- **Country search**: Text match filter on country names
+- **Reset view**: Restores default measures, clears filters, and resets map zoom
 
-How views update:
-- Changing left/right measure updates the top charts and the merged scatter axis labels + data.
-- Changing map measure updates map fill colors and tooltip values.
-- Changing merged year filters only the merged comparison chart for focused cross-attribute comparison.
+Panel-specific controls:
 
-## Color scheme and rationale
+- **Comparison tab**: choose X and Y measures
+- **Map tab**: choose map measure and map year
 
-### 1) Sequential palettes for absolute measures
-- **GDP per capita** uses `d3.interpolateBlues` (light = lower, dark = higher).
-- **Top 1% income share** uses `d3.interpolateOrRd` (light = lower, dark = higher).
-- These are absolute-value indicators, so monotonic light-to-dark scales communicate magnitude well.
+Other behavior:
 
-### 2) Diverging palettes for change measures
-- **GDP growth (YoY %)** uses `d3.interpolateRdYlGn` with a zero-centered domain.
-- **Top 1% share change (YoY pp)** uses `d3.interpolatePuOr` with a zero-centered domain.
-- Diverging schemes are used because both measures have meaningful positive and negative directions.
+- Hover any mark/country for tooltips
+- Zoom/pan is enabled on the map
+- UI state is synced to URL query params for shareable views
 
-### 3) Missing data treatment
-- Missing values are encoded as neutral gray on the map and omitted from scatter/bubble point layers.
-- This avoids suggesting false quantitative rankings.
+## Color semantics
 
-This strategy aligns color semantics with data semantics: absolute measures use sequential intensity, while directional change measures use diverging color around zero.
+- **Sequential scales** for absolute measures (e.g., GDP per capita, top 1% share, median income)
+- **Diverging scales** for directional change measures (e.g., GDP growth, top 1% share change)
+- Missing map values are shown in neutral gray
+
+## Data files
+
+All source files are in `data/`:
+
+- `income-share-top-1-before-tax-wid.csv`
+- `gdp-per-capita-worldbank.csv`
+- `median-income-after-tax-lis.csv`
+- `world.json` (map geometry)
